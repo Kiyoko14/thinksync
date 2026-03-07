@@ -7,6 +7,7 @@ import Link from "next/link";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
@@ -18,7 +19,7 @@ export default function LoginPage() {
     setError("");
 
     try {
-      await apiClient.login(email);
+      await apiClient.login(email, password);
       setSuccess(true);
       setEmail("");
       setTimeout(() => {
@@ -70,6 +71,12 @@ export default function LoginPage() {
                 placeholder="you@example.com"
                 required
                 className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
               />
             </div>
 
