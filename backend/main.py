@@ -7,7 +7,7 @@ app = FastAPI(title="AI DevOps Platform", version="1.0.0")
 # CORS - Open for everyone for now
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=["https://api.thinksync.art"],  # Allow all origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
