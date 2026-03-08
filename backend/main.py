@@ -4,10 +4,18 @@ from config import supabase, redis_client, openai_client
 
 app = FastAPI(title="AI DevOps Platform", version="1.0.0")
 
-# CORS - Open for everyone for now
+# CORS Configuration
+# Restrict to specific domains for production security
+allowed_origins = [
+    "http://localhost:3000",  # Local development
+    "http://localhost:8000",  # API local development
+    "https://thinksync.art",
+    "https://api.thinksync.art",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://api.thinksync.art"],  # Allow all origins
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -15,12 +23,25 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    return {"message": "AI DevOps Platform API"}
+    return {"message": "AI DevOps Platform API", "version": "1.0.0"}
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for deployment"""
+    health_status = {
+        "status": "healthy",
+        "database": "connected" if supabase else "disconnected",
+        "redis": "connected" if redis_client else "disconnected",
+        "openai": "configured" if openai_client else "not_configured"
+    }
+    return health_status
 
 # Include routers
-from routers import auth, servers, chats, agents, database
+from routers import auth, servers, chats, agents, database, deployments, tasks
 app.include_router(auth.router)
 app.include_router(servers.router)
 app.include_router(chats.router)
 app.include_router(agents.router)
 app.include_router(database.router)
+app.include_router(deployments.router)
+app.include_router(tasks.router)

@@ -1,0 +1,68 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Node
+node_modules
+npm-debug.log
+npm-debug.log*
+yarn-debug.log
+yarn-error.log
+.next
+.npm
+pnpm-debug.log
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv
+*.egg-info
+dist
+build
+.pytest_cache
+.mypy_cache
+.egg
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.sublime-project
+.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Documentation
+README.md
+DEPLOYMENT.md
+FIXES_SUMMARY.md
+*.md
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.circleci
+
+# Development
+.cursorignore
+.ruff_cache

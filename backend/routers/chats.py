@@ -5,6 +5,7 @@ from routers.auth import get_current_user
 from pydantic import BaseModel
 from typing import List
 import os
+import json
 
 router = APIRouter(prefix="/chats", tags=["chats"])
 
@@ -52,7 +53,12 @@ async def send_message(chat_id: str, content: str, current_user: dict = Depends(
         "content": content
     }
     response = supabase.table("messages").insert(message_data).execute()
-    # Trigger AI processing
-    from ..agents.orchestrator import process_message
-    await process_message(chat_id, content)
+    # Trigger AI processing with error handling
+    try:
+        from agents.orchestrator import process_message
+        await process_message(chat_id, content)
+    except ImportError:
+        print("Warning: agents.orchestrator module not found")
+    except Exception as e:
+        print(f"Error processing message: {e}")
     return response.data[0]

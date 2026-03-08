@@ -6,6 +6,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 import requests
 import os
+import secrets
+import string
 
 router = APIRouter(prefix="/database", tags=["database"])
 
@@ -35,10 +37,15 @@ async def create_database(request: CreateDatabaseRequest, current_user: dict = D
         "Content-Type": "application/json"
     }
     
+    # Generate secure random password
+    password_length = 32
+    password_chars = string.ascii_letters + string.digits + "!@#$%^&*"
+    secure_password = ''.join(secrets.choice(password_chars) for _ in range(password_length))
+    
     project_data = {
         "name": f"db-{current_user['id']}-{request.server_id or 'global'}",
         "organization_id": org_id,
-        "db_pass": "secure_password",  # Generate secure password
+        "db_pass": secure_password,
         "region": "us-east-1"
     }
     

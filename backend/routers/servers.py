@@ -102,7 +102,7 @@ Provide only the deployment script/commands."""
                     }
                 ]
             )
-            deployment_script = response.choices[0].message.content
+                deployment_script = response.choices[0].message.content if response else f"# Deployment script for {request.language}\necho 'Deploying...'"
         except:
             deployment_script = f"# Deployment script for {request.language}\necho 'Deploying...'"
     else:
