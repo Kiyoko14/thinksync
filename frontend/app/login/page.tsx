@@ -1,30 +1,24 @@
 "use client";
 
-import { useState } from "react";
-import { apiClient } from "@/lib/api";
+import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { apiClient } from "@/lib/api";
 
 export default function LoginPage() {
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState(false);
-  const router = useRouter();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault();
     setError("");
+    setLoading(true);
 
     try {
       await apiClient.login(email, password);
-      setSuccess(true);
-      setEmail("");
-      setTimeout(() => {
-        router.push("/dashboard");
-      }, 2000);
+      router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -33,78 +27,61 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center px-4">
-      <div className="w-full max-w-md">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="w-14 h-14 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center mx-auto mb-4">
-            <svg
-              className="w-8 h-8 text-white"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
+    <div className="relative min-h-screen overflow-hidden bg-[#06080d] text-white">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(47,104,255,0.22),_transparent_40%),radial-gradient(circle_at_80%_30%,_rgba(22,163,74,0.16),_transparent_35%)]" />
+      <div className="relative mx-auto flex min-h-screen w-full max-w-6xl items-center justify-center px-5 py-10 sm:px-8">
+        <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900/70 p-8 shadow-[0_24px_60px_-20px_rgba(15,23,42,0.9)] backdrop-blur-xl">
+          <div className="mb-8 text-center">
+            <p className="text-xs uppercase tracking-[0.22em] text-slate-400">AI DevOps Platform</p>
+            <h1 className="mt-3 text-3xl font-semibold tracking-tight">ThinkSync</h1>
+            <p className="mt-2 text-sm text-slate-400">Platformaga kirish uchun hisobingizga login qiling</p>
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2">ThinkSync</h1>
-          <p className="text-slate-400">AI DevOps Platform</p>
-        </div>
 
-        {/* Form Card */}
-        <div className="bg-slate-800 border border-slate-700 rounded-xl shadow-xl p-8 mb-6">
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-slate-300 mb-2">
-                Email Address
+              <label htmlFor="email" className="mb-2 block text-sm text-slate-300">
+                Email
               </label>
               <input
                 id="email"
                 type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
                 required
-                className="w-full px-4 py-3 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="you@company.com"
+                className="w-full rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-sm text-white outline-none transition focus:border-blue-500"
               />
+            </div>
+
+            <div>
+              <label htmlFor="password" className="mb-2 block text-sm text-slate-300">
+                Password
+              </label>
               <input
+                id="password"
                 type="password"
-                placeholder="Password"
+                required
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="••••••••"
+                className="w-full rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-3 text-sm text-white outline-none transition focus:border-blue-500"
               />
             </div>
 
             {error && (
-              <div className="p-4 bg-red-500/10 border border-red-500/50 rounded-lg">
-                <p className="text-red-400 text-sm">{error}</p>
-              </div>
-            )}
-
-            {success && (
-              <div className="p-4 bg-green-500/10 border border-green-500/50 rounded-lg">
-                <p className="text-green-400 text-sm">Magic link sent! Redirecting...</p>
+              <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                {error}
               </div>
             )}
 
             <button
               type="submit"
-              disabled={loading || success}
-              className="w-full py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-semibold rounded-lg hover:from-blue-600 hover:to-purple-700 transition disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-105 duration-200"
+              disabled={loading}
+              className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-4 py-3 text-sm font-semibold text-white transition hover:from-blue-500 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {loading ? "Sending Link..." : "Send Magic Link"}
+              {loading ? "Kirish tekshirilmoqda..." : "Login"}
             </button>
           </form>
-        </div>
-
-        {/* Footer */}
-        <div className="text-center text-slate-400 text-sm">
-          <p>Professional DevOps Automation Platform</p>
         </div>
       </div>
     </div>

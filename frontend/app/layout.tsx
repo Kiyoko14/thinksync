@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
+import { Space_Grotesk } from 'next/font/google';
 import './globals.css';
-import Navbar from '@/components/Navbar';
-import Footer from '@/components/Footer';
+
+const spaceGrotesk = Space_Grotesk({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: 'ThinkSync - AI DevOps Platform',
@@ -21,11 +22,7 @@ export default function RootLayout({
           content="width=device-width, initial-scale=1.0, maximum-scale=5.0"
         />
       </head>
-      <body className="bg-white dark:bg-black text-gray-900 dark:text-gray-100">
-        <Navbar />
-        <main className="min-h-screen">{children}</main>
-        <Footer />
-      </body>
+      <body className={`${spaceGrotesk.className} bg-[#070b12] text-slate-100 antialiased`}>{children}</body>
     </html>
   );
 }

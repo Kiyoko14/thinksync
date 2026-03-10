@@ -3,11 +3,15 @@ from config import supabase, openai_client
 from models import Server
 from routers.auth import get_current_user
 from services.execution import ExecutionSandbox
+from services.state_tracker import get_server_state
 from pydantic import BaseModel
-from typing import List
-import json
+from typing import Dict, List
+from uuid import uuid4
+from datetime import datetime, timezone
 
 router = APIRouter(prefix="/servers", tags=["servers"])
+
+LOCAL_SERVERS: Dict[str, dict] = {}
 
 class CreateServerRequest(BaseModel):
     name: str
@@ -27,61 +31,113 @@ class ExecuteCommandRequest(BaseModel):
 
 @router.get("/", response_model=List[Server])
 async def get_servers(current_user: dict = Depends(get_current_user)):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not configured")
-    response = supabase.table("servers").select("*").eq("user_id", current_user["id"]).execute()
-    return response.data
+    if supabase:
+        response = supabase.table("servers").select("*").eq("user_id", current_user["id"]).execute()
+        return response.data
+
+    return [
+        server
+        for server in LOCAL_SERVERS.values()
+        if server["user_id"] == current_user["id"]
+    ]
+
+
+@router.get("/{server_id}", response_model=Server)
+async def get_server(server_id: str, current_user: dict = Depends(get_current_user)):
+    if supabase:
+        response = (
+            supabase.table("servers")
+            .select("*")
+            .eq("id", server_id)
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Server not found")
+        return response.data[0]
+
+    server = LOCAL_SERVERS.get(server_id)
+    if not server or server["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Server not found")
+    return server
 
 @router.post("/", response_model=Server)
 async def create_server(request: CreateServerRequest, current_user: dict = Depends(get_current_user)):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not configured")
     server_data = {
+        "id": str(uuid4()),
         "user_id": current_user["id"],
         "name": request.name,
         "host": request.host,
         "ssh_user": request.ssh_user,
         "ssh_port": request.ssh_port,
-        "ssh_key": request.ssh_key
+        "ssh_key": request.ssh_key,
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    response = supabase.table("servers").insert(server_data).execute()
-    return response.data[0]
+    if supabase:
+        payload = {k: v for k, v in server_data.items() if k != "id"}
+        response = supabase.table("servers").insert(payload).execute()
+        return response.data[0]
+
+    LOCAL_SERVERS[server_data["id"]] = server_data
+    return server_data
 
 @router.put("/{server_id}", response_model=Server)
 async def update_server(server_id: str, request: CreateServerRequest, current_user: dict = Depends(get_current_user)):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not configured")
     server_data = {
         "name": request.name,
         "host": request.host,
         "ssh_user": request.ssh_user,
         "ssh_port": request.ssh_port,
-        "ssh_key": request.ssh_key
+        "ssh_key": request.ssh_key,
     }
-    response = supabase.table("servers").update(server_data).eq("id", server_id).eq("user_id", current_user["id"]).execute()
-    return response.data[0]
+    if supabase:
+        response = (
+            supabase.table("servers")
+            .update(server_data)
+            .eq("id", server_id)
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Server not found")
+        return response.data[0]
+
+    local_server = LOCAL_SERVERS.get(server_id)
+    if not local_server or local_server["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Server not found")
+    local_server.update(server_data)
+    return local_server
 
 @router.delete("/{server_id}")
 async def delete_server(server_id: str, current_user: dict = Depends(get_current_user)):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not configured")
-    # Delete related chats and workspaces
-    supabase.table("chats").delete().eq("server_id", server_id).execute()
-    supabase.table("servers").delete().eq("id", server_id).eq("user_id", current_user["id"]).execute()
+    if supabase:
+        supabase.table("chats").delete().eq("server_id", server_id).execute()
+        supabase.table("servers").delete().eq("id", server_id).eq("user_id", current_user["id"]).execute()
+    else:
+        local_server = LOCAL_SERVERS.get(server_id)
+        if not local_server or local_server["user_id"] != current_user["id"]:
+            raise HTTPException(status_code=404, detail="Server not found")
+        del LOCAL_SERVERS[server_id]
     return {"message": "Server deleted"}
 
 @router.post("/{server_id}/deploy")
 async def deploy_code(server_id: str, request: DeploymentRequest, current_user: dict = Depends(get_current_user)):
     """Deploy code to a server using AI assistance"""
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not configured")
-    
-    # Verify server belongs to user
-    server_response = supabase.table("servers").select("*").eq("id", server_id).eq("user_id", current_user["id"]).execute()
-    if not server_response.data:
-        raise HTTPException(status_code=404, detail="Server not found")
-    
-    server = server_response.data[0]
+    if supabase:
+        server_response = (
+            supabase.table("servers")
+            .select("*")
+            .eq("id", server_id)
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        if not server_response.data:
+            raise HTTPException(status_code=404, detail="Server not found")
+        server = server_response.data[0]
+    else:
+        server = LOCAL_SERVERS.get(server_id)
+        if not server or server["user_id"] != current_user["id"]:
+            raise HTTPException(status_code=404, detail="Server not found")
     
     # Use AI to generate deployment script
     if openai_client:
@@ -102,7 +158,11 @@ Provide only the deployment script/commands."""
                     }
                 ]
             )
-                deployment_script = response.choices[0].message.content if response else f"# Deployment script for {request.language}\necho 'Deploying...'"
+            deployment_script = (
+                response.choices[0].message.content
+                if response
+                else f"# Deployment script for {request.language}\necho 'Deploying...'"
+            )
         except:
             deployment_script = f"# Deployment script for {request.language}\necho 'Deploying...'"
     else:
@@ -119,33 +179,43 @@ Provide only the deployment script/commands."""
         "status": "pending"
     }
     
-    try:
-        result = supabase.table("deployments").insert(deployment_data).execute()
-        return {
-            "deployment_id": result.data[0]["id"],
-            "status": "pending",
-            "script": deployment_script,
-            "message": "Deployment queued successfully"
-        }
-    except Exception as e:
-        return {
-            "status": "pending",
-            "script": deployment_script,
-            "message": "Deployment script generated (database unavailable)"
-        }
+    if supabase:
+        try:
+            result = supabase.table("deployments").insert(deployment_data).execute()
+            return {
+                "deployment_id": result.data[0]["id"],
+                "status": "pending",
+                "script": deployment_script,
+                "message": "Deployment queued successfully",
+            }
+        except Exception:
+            pass
+
+    return {
+        "status": "pending",
+        "script": deployment_script,
+        "message": "Deployment script generated",
+    }
 
 @router.post("/{server_id}/execute")
 async def execute_command(server_id: str, request: ExecuteCommandRequest, current_user: dict = Depends(get_current_user)):
     """Execute a command on a server"""
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not configured")
-    
-    # Verify server belongs to user
-    server_response = supabase.table("servers").select("*").eq("id", server_id).eq("user_id", current_user["id"]).execute()
-    if not server_response.data:
-        raise HTTPException(status_code=404, detail="Server not found")
-    
-    server = server_response.data[0]
+    if supabase:
+        server_response = (
+            supabase.table("servers")
+            .select("*")
+            .eq("id", server_id)
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        if not server_response.data:
+            raise HTTPException(status_code=404, detail="Server not found")
+        server = server_response.data[0]
+    else:
+        server = LOCAL_SERVERS.get(server_id)
+        if not server or server["user_id"] != current_user["id"]:
+            raise HTTPException(status_code=404, detail="Server not found")
+
     sandbox = ExecutionSandbox()
     
     # Safety check
@@ -178,14 +248,22 @@ async def execute_command(server_id: str, request: ExecuteCommandRequest, curren
 @router.get("/{server_id}/status")
 async def get_server_status(server_id: str, current_user: dict = Depends(get_current_user)):
     """Get server status"""
-    if not supabase:
-        return {"status": "unknown", "message": "Database not configured"}
-    
-    server_response = supabase.table("servers").select("*").eq("id", server_id).eq("user_id", current_user["id"]).execute()
-    if not server_response.data:
-        raise HTTPException(status_code=404, detail="Server not found")
-    
-    server = server_response.data[0]
+    if supabase:
+        server_response = (
+            supabase.table("servers")
+            .select("*")
+            .eq("id", server_id)
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        if not server_response.data:
+            raise HTTPException(status_code=404, detail="Server not found")
+        server = server_response.data[0]
+    else:
+        server = LOCAL_SERVERS.get(server_id)
+        if not server or server["user_id"] != current_user["id"]:
+            raise HTTPException(status_code=404, detail="Server not found")
+
     sandbox = ExecutionSandbox()
     
     try:
@@ -205,3 +283,23 @@ async def get_server_status(server_id: str, current_user: dict = Depends(get_cur
         return {"status": "online", "server": server}
     except:
         return {"status": "offline", "server": server}
+
+
+@router.get("/{server_id}/state")
+async def get_filesystem_state(server_id: str, current_user: dict = Depends(get_current_user)):
+    if supabase:
+        server_response = (
+            supabase.table("servers")
+            .select("id")
+            .eq("id", server_id)
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        if not server_response.data:
+            raise HTTPException(status_code=404, detail="Server not found")
+    else:
+        server = LOCAL_SERVERS.get(server_id)
+        if not server or server["user_id"] != current_user["id"]:
+            raise HTTPException(status_code=404, detail="Server not found")
+
+    return get_server_state(server_id)

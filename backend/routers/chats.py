@@ -1,64 +1,220 @@
+from datetime import datetime, timezone
+from typing import Dict, List, Optional
+from uuid import uuid4
+
 from fastapi import APIRouter, Depends, HTTPException
-from config import supabase, redis_client
-from models import Chat, Message, Task
+from pydantic import BaseModel, Field
+
+from config import supabase
+from models import Chat, Message
 from routers.auth import get_current_user
-from pydantic import BaseModel
-from typing import List
-import os
-import json
+from routers.servers import LOCAL_SERVERS
+from services.state_tracker import (
+    append_command_history,
+    get_chat_context,
+    get_command_history,
+    inspect_and_apply_command,
+)
 
 router = APIRouter(prefix="/chats", tags=["chats"])
 
+LOCAL_CHATS: Dict[str, dict] = {}
+LOCAL_MESSAGES: Dict[str, List[dict]] = {}
+
+
 class CreateChatRequest(BaseModel):
     server_id: str
-    name: str
+    name: str = Field(min_length=2, max_length=120)
+
+
+class SendMessageRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=5000)
+
+
+class ChatContextResponse(BaseModel):
+    chat_id: str
+    server_id: str
+    cwd: str
+    command_history: List[dict]
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _validate_server_access(server_id: str, current_user: dict) -> None:
+    if supabase:
+        response = (
+            supabase.table("servers")
+            .select("id")
+            .eq("id", server_id)
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Server not found")
+        return
+
+    local_server = LOCAL_SERVERS.get(server_id)
+    if not local_server or local_server["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Server not found")
+
 
 @router.get("/", response_model=List[Chat])
-async def get_chats(current_user: dict = Depends(get_current_user)):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not configured")
-    response = supabase.table("chats").select("*").eq("user_id", current_user["id"]).execute()
-    return response.data
+async def get_chats(
+    server_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+):
+    if supabase:
+        query = supabase.table("chats").select("*").eq("user_id", current_user["id"])
+        if server_id:
+            query = query.eq("server_id", server_id)
+        response = query.order("created_at", desc=True).execute()
+        return response.data
+
+    result = [
+        chat for chat in LOCAL_CHATS.values() if chat["user_id"] == current_user["id"]
+    ]
+    if server_id:
+        result = [chat for chat in result if chat["server_id"] == server_id]
+    return sorted(result, key=lambda item: item["created_at"], reverse=True)
+
+
+@router.get("/{chat_id}", response_model=Chat)
+async def get_chat(chat_id: str, current_user: dict = Depends(get_current_user)):
+    if supabase:
+        response = (
+            supabase.table("chats")
+            .select("*")
+            .eq("id", chat_id)
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        return response.data[0]
+
+    chat = LOCAL_CHATS.get(chat_id)
+    if not chat or chat["user_id"] != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Chat not found")
+    return chat
+
 
 @router.post("/", response_model=Chat)
 async def create_chat(request: CreateChatRequest, current_user: dict = Depends(get_current_user)):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not configured")
-    workspace_path = f"/home/aiuser/workspaces/{request.name.replace(' ', '_')}"
+    await _validate_server_access(request.server_id, current_user)
+
+    workspace_path = f"/workspace/server_{request.server_id}/chat_{request.name.replace(' ', '_').lower()}"
     chat_data = {
+        "id": str(uuid4()),
         "server_id": request.server_id,
         "user_id": current_user["id"],
         "name": request.name,
-        "workspace_path": workspace_path
+        "workspace_path": workspace_path,
+        "created_at": _now(),
     }
-    response = supabase.table("chats").insert(chat_data).execute()
-    # Create workspace directory
-    os.makedirs(workspace_path, exist_ok=True)
-    return response.data[0]
+
+    if supabase:
+        payload = {k: v for k, v in chat_data.items() if k != "id"}
+        response = supabase.table("chats").insert(payload).execute()
+        created_chat = response.data[0]
+        get_chat_context(created_chat["id"], created_chat["server_id"])
+        return created_chat
+
+    LOCAL_CHATS[chat_data["id"]] = chat_data
+    LOCAL_MESSAGES[chat_data["id"]] = []
+    get_chat_context(chat_data["id"], chat_data["server_id"])
+    return chat_data
+
 
 @router.get("/{chat_id}/messages", response_model=List[Message])
 async def get_messages(chat_id: str, current_user: dict = Depends(get_current_user)):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not configured")
-    response = supabase.table("messages").select("*").eq("chat_id", chat_id).order("created_at").execute()
-    return response.data
+    await get_chat(chat_id, current_user)
+
+    if supabase:
+        response = (
+            supabase.table("messages")
+            .select("*")
+            .eq("chat_id", chat_id)
+            .order("created_at")
+            .execute()
+        )
+        return response.data
+
+    return LOCAL_MESSAGES.get(chat_id, [])
+
 
 @router.post("/{chat_id}/messages")
-async def send_message(chat_id: str, content: str, current_user: dict = Depends(get_current_user)):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not configured")
-    message_data = {
+async def send_message(
+    chat_id: str,
+    request: SendMessageRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    chat = await get_chat(chat_id, current_user)
+
+    user_message = {
+        "id": str(uuid4()),
         "chat_id": chat_id,
         "role": "user",
-        "content": content
+        "content": request.content,
+        "created_at": _now(),
     }
-    response = supabase.table("messages").insert(message_data).execute()
-    # Trigger AI processing with error handling
-    try:
-        from agents.orchestrator import process_message
-        await process_message(chat_id, content)
-    except ImportError:
-        print("Warning: agents.orchestrator module not found")
-    except Exception as e:
-        print(f"Error processing message: {e}")
-    return response.data[0]
+
+    command = request.content.strip()
+    inspection = inspect_and_apply_command(chat["server_id"], chat_id, command)
+
+    if inspection.get("status") == "skipped":
+        assistant_text = (
+            "Bu buyruq avval bajarilgan: mavjud papkalar qayta yaratilmaydi. "
+            "Faqat yangi o'zgarishlar qo'llandi."
+        )
+    elif inspection.get("status") == "blocked":
+        assistant_text = inspection.get("message", "Buyruq bloklandi")
+    elif inspection.get("status") == "success":
+        created = inspection.get("created", [])
+        if created:
+            assistant_text = f"Yangi kataloglar yaratildi: {', '.join(created)}"
+        else:
+            assistant_text = inspection.get("message", "Buyruq bajarildi")
+    else:
+        assistant_text = "Xabar qabul qilindi."
+
+    assistant_message = {
+        "id": str(uuid4()),
+        "chat_id": chat_id,
+        "role": "assistant",
+        "content": assistant_text,
+        "created_at": _now(),
+    }
+
+    append_command_history(
+        chat_id,
+        {
+            "input": request.content,
+            "result": inspection,
+            "created_at": _now(),
+        },
+    )
+
+    if supabase:
+        supabase.table("messages").insert([user_message, assistant_message]).execute()
+    else:
+        LOCAL_MESSAGES.setdefault(chat_id, []).extend([user_message, assistant_message])
+
+    return {
+        "user_message": user_message,
+        "assistant_message": assistant_message,
+        "inspection": inspection,
+    }
+
+
+@router.get("/{chat_id}/context", response_model=ChatContextResponse)
+async def get_chat_context_state(chat_id: str, current_user: dict = Depends(get_current_user)):
+    chat = await get_chat(chat_id, current_user)
+    context = get_chat_context(chat_id, chat["server_id"])
+    return ChatContextResponse(
+        chat_id=chat_id,
+        server_id=chat["server_id"],
+        cwd=context.cwd,
+        command_history=get_command_history(chat_id),
+    )

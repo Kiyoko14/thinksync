@@ -1,169 +1,139 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { apiClient, User } from "@/lib/api";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { ReactNode, useEffect, useState } from "react";
+import { apiClient, User } from "@/lib/api";
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+type MenuItem = {
+  name: string;
+  href: string;
+};
+
+const menuItems: MenuItem[] = [
+  { name: "Overview", href: "/dashboard" },
+  { name: "Servers", href: "/dashboard/servers" },
+  { name: "Chats", href: "/dashboard/chats" },
+  { name: "Deployments", href: "/dashboard/deployments" },
+  { name: "Databases", href: "/dashboard/databases" },
+];
+
+export default function DashboardLayout({ children }: { children: ReactNode }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const router = useRouter();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
-    const loadUser = async () => {
+    const bootstrap = async () => {
       try {
         const session = await apiClient.getSession();
         setUser(session);
-      } catch (err) {
+      } catch {
         router.push("/login");
       } finally {
         setLoading(false);
       }
     };
 
-    loadUser();
+    bootstrap();
   }, [router]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     localStorage.removeItem("authToken");
     router.push("/login");
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-white">Loading...</div>
+      <div className="flex min-h-screen items-center justify-center bg-[#070b12] text-slate-100">
+        ThinkSync yuklanmoqda...
       </div>
     );
   }
 
-  const menuItems = [
-    {
-      name: "Dashboard",
-      href: "/dashboard",
-      icon: "📊",
-      current: true,
-    },
-    {
-      name: "Servers",
-      href: "/dashboard/servers",
-      icon: "🖥️",
-      current: false,
-    },
-    {
-      name: "AI Chats",
-      href: "/dashboard/chats",
-      icon: "💬",
-      current: false,
-    },
-    {
-      name: "Databases",
-      href: "/dashboard/databases",
-      icon: "🗄️",
-      current: false,
-    },
-    {
-      name: "Deployments",
-      href: "/dashboard/deployments",
-      icon: "🚀",
-      current: false,
-    },
-  ];
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      {/* Sidebar */}
+    <div className="min-h-screen bg-[#070b12] text-slate-100">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top,_rgba(37,99,235,0.20),_transparent_45%),radial-gradient(circle_at_90%_20%,_rgba(14,165,233,0.18),_transparent_35%)]" />
+
       <aside
-        className={`fixed left-0 top-0 z-40 h-screen w-64 bg-slate-800 border-r border-slate-700 transform transition-transform duration-200 ${
+        className={`fixed inset-y-0 left-0 z-40 w-72 border-r border-slate-800 bg-slate-900/95 px-5 py-6 backdrop-blur transition-transform duration-200 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         } lg:translate-x-0`}
       >
-        <div className="h-full flex flex-col">
-          {/* Logo */}
-          <div className="p-6 border-b border-slate-700">
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold">TS</span>
-              </div>
-              <div>
-                <h1 className="text-white font-bold text-lg">ThinkSync</h1>
-                <p className="text-slate-400 text-xs">DevOps Platform</p>
-              </div>
+        <div className="mb-8 flex items-center justify-between">
+          <Link href="/dashboard" className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-cyan-500 text-sm font-bold">
+              TS
             </div>
-          </div>
+            <div>
+              <p className="text-sm uppercase tracking-[0.2em] text-slate-400">Platform</p>
+              <p className="text-lg font-semibold">ThinkSync</p>
+            </div>
+          </Link>
+          <button className="text-slate-400 lg:hidden" onClick={() => setSidebarOpen(false)}>
+            ✕
+          </button>
+        </div>
 
-          {/* Menu */}
-          <nav className="flex-1 px-4 py-6 space-y-2">
-            {menuItems.map((item) => (
+        <nav className="space-y-1">
+          {menuItems.map((item) => {
+            const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            return (
               <Link
-                key={item.name}
+                key={item.href}
                 href={item.href}
-                className="flex items-center space-x-3 px-4 py-3 rounded-lg text-slate-300 hover:bg-slate-700 hover:text-white transition"
+                className={`block rounded-xl px-4 py-3 text-sm transition ${
+                  active
+                    ? "bg-gradient-to-r from-blue-600/30 to-cyan-500/20 text-white"
+                    : "text-slate-300 hover:bg-slate-800 hover:text-white"
+                }`}
+                onClick={() => setSidebarOpen(false)}
               >
-                <span className="text-xl">{item.icon}</span>
-                <span className="text-sm font-medium">{item.name}</span>
+                {item.name}
               </Link>
-            ))}
-          </nav>
+            );
+          })}
+        </nav>
 
-          {/* User Profile */}
-          <div className="p-4 border-t border-slate-700">
-            <div className="flex items-center space-x-3 mb-4">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold">
-                {user?.email?.charAt(0).toUpperCase()}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-white truncate">{user?.email}</p>
-              </div>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="w-full px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 hover:text-white rounded-lg transition text-sm font-medium"
-            >
-              Logout
-            </button>
-          </div>
+        <div className="mt-8 rounded-xl border border-slate-800 bg-slate-800/70 p-4 text-xs text-slate-300">
+          <p className="font-semibold text-slate-100">Server-state himoyasi yoqilgan</p>
+          <p className="mt-2">Agent har buyruqdan oldin filesystem holatini tekshiradi.</p>
         </div>
       </aside>
 
-      {/* Main Content */}
-      <div className="lg:ml-64">
-        {/* Top Bar */}
-        <div className="bg-slate-800 border-b border-slate-700 sticky top-0 z-30">
-          <div className="flex items-center justify-between px-6 py-4">
-            <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="lg:hidden text-slate-400 hover:text-white transition"
-            >
-              <svg
-                className="w-6 h-6"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+      <div className="relative lg:pl-72">
+        <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/85 backdrop-blur">
+          <div className="flex items-center justify-between px-5 py-4 sm:px-8">
+            <div className="flex items-center gap-3">
+              <button className="text-slate-300 lg:hidden" onClick={() => setSidebarOpen(true)}>
+                ☰
+              </button>
+              <p className="text-sm text-slate-400">AI DevOps Dashboard</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <p className="hidden text-sm text-slate-300 sm:block">{user?.email}</p>
+              <button
+                onClick={handleLogout}
+                className="rounded-lg border border-slate-700 px-4 py-2 text-sm text-slate-200 transition hover:border-slate-500 hover:bg-slate-800"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M4 6h16M4 12h16M4 18h16"
-                />
-              </svg>
-            </button>
-            <div className="flex items-center space-x-4">
-              <span className="text-slate-300">Welcome back!</span>
+                Logout
+              </button>
             </div>
           </div>
-        </div>
+        </header>
 
-        {/* Page Content */}
-        <main className="p-6">{children}</main>
+        <main className="relative px-5 py-6 sm:px-8 sm:py-8">{children}</main>
       </div>
+
+      {sidebarOpen && (
+        <button
+          aria-label="Close sidebar"
+          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
     </div>
   );
 }

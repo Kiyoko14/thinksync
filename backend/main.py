@@ -37,10 +37,11 @@ async def health_check():
     return health_status
 
 # Include routers
-from routers import auth, servers, chats, agents, database, deployments, tasks
+from routers import auth, servers, chats, agents, database, deployments, tasks, messages
 app.include_router(auth.router)
 app.include_router(servers.router)
 app.include_router(chats.router)
+app.include_router(messages.router)
 app.include_router(agents.router)
 app.include_router(database.router)
 app.include_router(deployments.router)
