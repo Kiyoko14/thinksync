@@ -283,10 +283,50 @@ async def get_server_status(server_id: str, current_user: dict = Depends(get_cur
         return {"status": "online", "server": server}
     except:
         return {"status": "offline", "server": server}
+@router.get("/{server_id}/status")
+async def get_server_status(server_id: str, current_user: dict = Depends(get_current_user)):
+    """Get server status"""
+
+    if supabase:
+        server_response = (
+            supabase.table("servers")
+            .select("*")
+            .eq("id", server_id)
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        if not server_response.data:
+            raise HTTPException(status_code=404, detail="Server not found")
+        server = server_response.data[0]
+    else:
+        server = LOCAL_SERVERS.get(server_id)
+        if not server or server["user_id"] != current_user["id"]:
+            raise HTTPException(status_code=404, detail="Server not found")
+
+    sandbox = ExecutionSandbox()
+
+    try:
+        result = await sandbox.execute_action(
+            {
+                "action": "run_command",
+                "command": "echo 'online'",
+                "chat_id": "status_check"
+            },
+            {
+                "host": server["host"],
+                "port": server["ssh_port"],
+                "username": server["ssh_user"],
+                "ssh_key": server["ssh_key"]
+            }
+        )
+        return {"status": "online", "server": server}
+    except:
+        return {"status": "offline", "server": server}
 
 
 @router.get("/{server_id}/state")
 async def get_filesystem_state(server_id: str, current_user: dict = Depends(get_current_user)):
+
     if supabase:
         server_response = (
             supabase.table("servers")
@@ -295,8 +335,10 @@ async def get_filesystem_state(server_id: str, current_user: dict = Depends(get_
             .eq("user_id", current_user["id"])
             .execute()
         )
+
         if not server_response.data:
             raise HTTPException(status_code=404, detail="Server not found")
+
     else:
         server = LOCAL_SERVERS.get(server_id)
         if not server or server["user_id"] != current_user["id"]:
