@@ -32,7 +32,7 @@ export default function ChatsNavigatorPage() {
       <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
         <h1 className="text-2xl font-semibold text-white">Chatlar markazi</h1>
         <p className="mt-2 text-sm text-slate-400">
-          Har bir chat server bilan bog'langan. To'g'ridan-to'g'ri server sahifasidan chat yarating yoki oching.
+          Har bir chat server bilan bog&apos;langan. To&apos;g&apos;ridan-to&apos;g&apos;ri server sahifasidan chat yarating yoki oching.
         </p>
       </section>
 

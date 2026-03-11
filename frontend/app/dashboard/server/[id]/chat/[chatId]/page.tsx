@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { apiClient, Chat, Message } from "@/lib/api";
 
@@ -16,7 +16,7 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const [chatData, messagesData] = await Promise.all([
         apiClient.getChat(chatId),
@@ -27,11 +27,11 @@ export default function ChatPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chat yuklanmadi");
     }
-  };
+  }, [chatId]);
 
   useEffect(() => {
-    loadData();
-  }, [chatId]);
+    void loadData();
+  }, [loadData]);
 
   const handleSend = async (event: FormEvent) => {
     event.preventDefault();

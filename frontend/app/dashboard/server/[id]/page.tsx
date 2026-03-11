@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { apiClient, Chat, Server } from "@/lib/api";
 
@@ -15,7 +15,7 @@ export default function ServerDetailPage() {
   const [chatName, setChatName] = useState("");
   const [error, setError] = useState("");
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     if (!serverId) return;
     try {
       const [serverData, chatsData] = await Promise.all([
@@ -27,11 +27,15 @@ export default function ServerDetailPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ma'lumot yuklanmadi");
     }
-  };
+  }, [serverId]);
 
   useEffect(() => {
-    loadData();
-  }, [serverId]);
+    const timer = setTimeout(() => {
+      void loadData();
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [loadData]);
 
   const handleCreateChat = async (event: FormEvent) => {
     event.preventDefault();
@@ -60,7 +64,7 @@ export default function ServerDetailPage() {
             onClick={() => setShowModal(true)}
             className="rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 py-3 text-sm font-semibold text-white"
           >
-            + Chat qo'shish
+            + Chat qo&apos;shish
           </button>
         </div>
       </section>
@@ -68,7 +72,7 @@ export default function ServerDetailPage() {
       {error && <p className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</p>}
 
       <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-        <h2 className="text-xl font-semibold text-white">Chatlar ro'yxati</h2>
+        <h2 className="text-xl font-semibold text-white">Chatlar ro&apos;yxati</h2>
         {chats.length === 0 ? (
           <p className="mt-3 text-sm text-slate-400">Hozircha chat mavjud emas.</p>
         ) : (
@@ -80,7 +84,7 @@ export default function ServerDetailPage() {
                 className="rounded-xl border border-slate-700 bg-slate-800/70 p-4 transition hover:border-blue-400"
               >
                 <p className="font-semibold text-white">{chat.name}</p>
-                <p className="mt-2 line-clamp-2 text-sm text-slate-400">Oxirgi xabarni chat ichida ko'rasiz.</p>
+                <p className="mt-2 line-clamp-2 text-sm text-slate-400">Oxirgi xabarni chat ichida ko&apos;rasiz.</p>
               </Link>
             ))}
           </div>

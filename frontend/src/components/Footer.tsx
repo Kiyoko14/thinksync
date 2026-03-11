@@ -1,147 +1,69 @@
+import Link from "next/link";
+import { Github, Mail } from "lucide-react";
+
 export default function Footer() {
   return (
-    <footer className="bg-gray-50 dark:bg-zinc-900 border-t border-gray-200 dark:border-zinc-800 mt-16">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
-          {/* Brand */}
+    <footer className="border-t border-slate-800/90 bg-slate-950/90">
+      <div className="mx-auto max-w-7xl px-6 py-12">
+        <div className="grid gap-8 md:grid-cols-3">
           <div>
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold">T</span>
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 text-sm font-bold text-white">
+                TS
               </div>
-              <span className="font-bold text-lg">ThinkSync</span>
+              <p className="text-lg font-semibold text-white">ThinkSync</p>
             </div>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              AI-powered DevOps platform for modern infrastructure
+            <p className="max-w-sm text-sm text-slate-400">
+              AI DevOps platform for managing servers, deployments, databases, and infrastructure automation.
             </p>
           </div>
 
-          {/* Product */}
           <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-              Product
-            </h3>
-            <ul className="space-y-3 text-sm">
+            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-cyan-200">Legal</p>
+            <ul className="mt-4 space-y-2 text-sm text-slate-300">
               <li>
-                <a
-                  href="#"
-                  className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
-                >
-                  Features
-                </a>
+                <Link href="/privacy" className="transition hover:text-cyan-200">
+                  Privacy Policy
+                </Link>
               </li>
               <li>
-                <a
-                  href="#"
-                  className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
-                >
-                  Pricing
-                </a>
+                <Link href="/refund" className="transition hover:text-cyan-200">
+                  Refund Policy
+                </Link>
               </li>
               <li>
-                <a
-                  href="#"
-                  className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
-                >
-                  Security
-                </a>
+                <Link href="/terms" className="transition hover:text-cyan-200">
+                  Terms of Service
+                </Link>
               </li>
             </ul>
           </div>
 
-          {/* Resources */}
           <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-              Resources
-            </h3>
-            <ul className="space-y-3 text-sm">
-              <li>
-                <a
-                  href="#"
-                  className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
-                >
-                  Documentation
-                </a>
-              </li>
-              <li>
-                <a
-                  href="#"
-                  className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
-                >
-                  API Docs
-                </a>
-              </li>
-              <li>
-                <a
-                  href="#"
-                  className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
-                >
-                  Community
-                </a>
-              </li>
-            </ul>
-          </div>
-
-          {/* Company */}
-          <div>
-            <h3 className="font-semibold text-gray-900 dark:text-white mb-4">
-              Company
-            </h3>
-            <ul className="space-y-3 text-sm">
-              <li>
-                <a
-                  href="#"
-                  className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
-                >
-                  About
-                </a>
-              </li>
-              <li>
-                <a
-                  href="#"
-                  className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
-                >
-                  Blog
-                </a>
-              </li>
-              <li>
-                <a
-                  href="#"
-                  className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
-                >
-                  Contact
-                </a>
-              </li>
-            </ul>
+            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-cyan-200">Contact</p>
+            <div className="mt-4 space-y-3 text-sm text-slate-300">
+              <a
+                href="mailto:support@thinksync.art"
+                className="flex items-center gap-2 transition hover:text-cyan-200"
+              >
+                <Mail className="h-4 w-4" />
+                support@thinksync.art
+              </a>
+              <a
+                href="https://github.com/Kiyoko14/thinksync"
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 transition hover:text-cyan-200"
+              >
+                <Github className="h-4 w-4" />
+                GitHub
+              </a>
+            </div>
           </div>
         </div>
 
-        <div className="border-t border-gray-200 dark:border-zinc-800 pt-8">
-          <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              © 2026 ThinkSync. All rights reserved.
-            </p>
-            <div className="flex gap-6 text-sm">
-              <a
-                href="#"
-                className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
-              >
-                Privacy
-              </a>
-              <a
-                href="#"
-                className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
-              >
-                Terms
-              </a>
-              <a
-                href="#"
-                className="text-gray-600 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400"
-              >
-                Cookies
-              </a>
-            </div>
-          </div>
+        <div className="mt-10 border-t border-slate-800 pt-6 text-sm text-slate-500">
+          © 2026 ThinkSync. All rights reserved.
         </div>
       </div>
     </footer>
