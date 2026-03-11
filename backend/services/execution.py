@@ -1,5 +1,3 @@
-import paramiko
-import os
 from config import redis_client, supabase
 import asyncio
 from typing import Dict, Any

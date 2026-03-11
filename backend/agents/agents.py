@@ -1,7 +1,5 @@
-import openai
 from config import redis_client, openai_client
 import json
-import asyncio
 import re
 from typing import Dict, List, Any, Optional
 
@@ -60,14 +58,14 @@ Action types: create_directory, write_file, run_command, install_package, config
                 {"role": "user", "content": f"Create a deployment plan for: {json.dumps(enhanced_context, indent=2)}"}
             ]
 
-            response = openai_client.ChatCompletion.create(
+            response = openai_client.chat.completions.create(
                 model="gpt-4",
                 messages=messages,
                 temperature=0.1,  # Low temperature for consistent planning
                 max_tokens=2000
             )
 
-            plan_text = response.choices[0].message.content.strip()
+            plan_text = (response.choices[0].message.content or "").strip()
 
             # Clean JSON response
             if plan_text.startswith("```json"):
@@ -215,14 +213,14 @@ Action types: run_command, create_file, modify_file, install_package, start_serv
                 {"role": "user", "content": f"Generate executable actions for this plan: {json.dumps(context_info, indent=2)}"}
             ]
 
-            response = openai_client.ChatCompletion.create(
+            response = openai_client.chat.completions.create(
                 model="gpt-4",
                 messages=messages,
                 temperature=0.2,
                 max_tokens=1500
             )
 
-            actions_text = response.choices[0].message.content.strip()
+            actions_text = (response.choices[0].message.content or "").strip()
 
             # Clean JSON response
             if actions_text.startswith("```json"):
@@ -428,14 +426,14 @@ Always respond with a valid JSON object containing:
                 {"role": "user", "content": f"Debug this error: {json.dumps(context_info, indent=2)}"}
             ]
 
-            response = openai_client.ChatCompletion.create(
+            response = openai_client.chat.completions.create(
                 model="gpt-4",
                 messages=messages,
                 temperature=0.1,
                 max_tokens=1500
             )
 
-            debug_text = response.choices[0].message.content.strip()
+            debug_text = (response.choices[0].message.content or "").strip()
 
             # Clean JSON response
             if debug_text.startswith("```json"):
@@ -539,14 +537,14 @@ Always respond with a valid JSON object containing:
                 {"role": "user", "content": f"Audit this action for security: {json.dumps(audit_context, indent=2)}"}
             ]
 
-            response = openai_client.ChatCompletion.create(
+            response = openai_client.chat.completions.create(
                 model="gpt-4",
                 messages=messages,
                 temperature=0.1,
                 max_tokens=1200
             )
 
-            audit_text = response.choices[0].message.content.strip()
+            audit_text = (response.choices[0].message.content or "").strip()
 
             # Clean JSON response
             if audit_text.startswith("```json"):

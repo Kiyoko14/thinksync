@@ -1,5 +1,3 @@
-import supabase
-from config import supabase as client
 import os
 
 class DatabaseManager:

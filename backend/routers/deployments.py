@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
 from config import supabase
-from models import Server
 from routers.auth import get_current_user
 from typing import List
 

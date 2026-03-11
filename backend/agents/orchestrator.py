@@ -2,8 +2,6 @@ from agents.agents import PlannerAgent, ActionAgent, BuilderAgent, DebuggerAgent
 from config import redis_client, supabase
 from services.execution import execute_action
 import json
-import asyncio
-from typing import Optional
 
 STATES = ["CREATED", "PLANNED", "ACTION_GENERATED", "BUILDING", "EXECUTING", "DEBUGGING", "AUDITING", "COMPLETED", "FAILED"]
 
@@ -46,52 +44,46 @@ class Orchestrator:
 
     async def run_task(self, task_id: str, message: str):
         """Run task with proper error handling"""
-        if not redis_client:
-            print("Warning: Redis not available, task monitoring disabled")
-            return
-        
+        task = {"state": "CREATED"}
+
+        def _persist_task_state(current_task: dict) -> None:
+            if redis_client:
+                redis_client.set(f"task:{task_id}", json.dumps(current_task))
+
         try:
-            task_data = redis_client.get(f"task:{task_id}")
-            if not task_data:
-                print(f"Task {task_id} not found in Redis")
-                return
-                
-            task = json.loads(task_data)
-            
-            if task["state"] == "CREATED":
-                plan = await self.planner.create_plan(message)
-                task["state"] = "PLANNED"
-                redis_client.set(f"task:{task_id}", json.dumps(task))
-                
-            if task["state"] == "PLANNED":
-                action = await self.action_agent.generate_action(plan)
-                task["state"] = "ACTION_GENERATED"
-                redis_client.set(f"task:{task_id}", json.dumps(task))
-                
-            if task["state"] == "ACTION_GENERATED":
-                await self.builder.build(action)
-                task["state"] = "BUILDING"
-                redis_client.set(f"task:{task_id}", json.dumps(task))
-                
-            if task["state"] == "BUILDING":
+            if redis_client:
+                task_data = redis_client.get(f"task:{task_id}")
+                if task_data:
+                    task = json.loads(task_data)
+
+            plan = await self.planner.create_plan(message)
+            task["state"] = "PLANNED"
+            _persist_task_state(task)
+
+            action_bundle = await self.action_agent.generate_action(plan)
+            action = (action_bundle.get("actions") or [{}])[0] if isinstance(action_bundle, dict) else {}
+            task["state"] = "ACTION_GENERATED"
+            _persist_task_state(task)
+
+            await self.builder.build(action, {})
+            task["state"] = "BUILDING"
+            _persist_task_state(task)
+
+            if action.get("server_id"):
                 result = await execute_action(action)
-                if result.get("status") == "success":
-                    task["state"] = "EXECUTING"
-                else:
-                    task["state"] = "DEBUGGING"
-                redis_client.set(f"task:{task_id}", json.dumps(task))
-                
-            if task["state"] == "EXECUTING":
-                audit_passed = await self.auditor.audit(action)
-                if audit_passed:
-                    task["state"] = "AUDITING"
-                else:
-                    task["state"] = "FAILED"
-                redis_client.set(f"task:{task_id}", json.dumps(task))
-                
-            if task["state"] == "AUDITING":
+                task["state"] = "EXECUTING" if result.get("status") == "success" else "DEBUGGING"
+            else:
+                task["state"] = "EXECUTING"
+            _persist_task_state(task)
+
+            audit_result = await self.auditor.audit(action)
+            if isinstance(audit_result, dict) and audit_result.get("approved", False):
+                task["state"] = "AUDITING"
+                _persist_task_state(task)
                 task["state"] = "COMPLETED"
-                redis_client.set(f"task:{task_id}", json.dumps(task))
+            else:
+                task["state"] = "FAILED"
+            _persist_task_state(task)
         except Exception as e:
             print(f"Error in task processing: {e}")
             if redis_client:

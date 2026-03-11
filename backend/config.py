@@ -3,6 +3,7 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 import redis
 from typing import Optional
+from openai import OpenAI
 
 load_dotenv()
 
@@ -37,12 +38,10 @@ else:
 
 # OpenAI
 openai_key = os.getenv("OPENAI_API_KEY")
-openai_client = None
+openai_client: Optional[OpenAI] = None
 if openai_key:
     try:
-        import openai
-        openai.api_key = openai_key
-        openai_client = openai
+        openai_client = OpenAI(api_key=openai_key)
         print("✓ OpenAI initialized successfully")
     except Exception as e:
         print(f"✗ Failed to initialize OpenAI: {e}")

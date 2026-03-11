@@ -32,7 +32,7 @@ COPY --from=builder /app/public ./public
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD npm run health-check || exit 1
+    CMD node -e "fetch('http://localhost:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" || exit 1
 
 # Expose port
 EXPOSE 3000

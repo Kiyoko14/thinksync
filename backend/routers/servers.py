@@ -142,7 +142,7 @@ async def deploy_code(server_id: str, request: DeploymentRequest, current_user: 
     # Use AI to generate deployment script
     if openai_client:
         try:
-            response = openai_client.ChatCompletion.create(
+            response = openai_client.chat.completions.create(
                 model="gpt-4",
                 messages=[
                     {
@@ -163,7 +163,7 @@ Provide only the deployment script/commands."""
                 if response
                 else f"# Deployment script for {request.language}\necho 'Deploying...'"
             )
-        except:
+        except Exception:
             deployment_script = f"# Deployment script for {request.language}\necho 'Deploying...'"
     else:
         deployment_script = f"# Deployment script for {request.language}\necho 'Deploying...'"
