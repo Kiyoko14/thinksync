@@ -7,10 +7,7 @@ app = FastAPI(title="AI DevOps Platform", version="1.0.0")
 # CORS Configuration
 # Restrict to specific domains for production security
 allowed_origins = [
-    "http://134.209.197.23:3000",  # Local development
-    "http://134.209.197.23:8000",  # API local development
-    "https:dev.//thinksync.art",
-    "https://api.thinksync.art",
+    "https://app.thinksync.art",
 ]
 
 app.add_middleware(
