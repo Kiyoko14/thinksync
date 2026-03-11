@@ -32,11 +32,10 @@ warn_status() {
 
 # 1. Check if .env file exists
 echo -e "${BLUE}1. Environment Configuration${NC}"
-if [ -f .env.local ]; then
-    echo -e "${GREEN}✓ .env.local found${NC}"
+if [ -f .env ]; then
+    echo -e "${GREEN}✓ .env found${NC}"
 else
-    cp .env.example .env.local 2>/dev/null || true
-    warn_status ".env.local not found - using defaults"
+    warn_status ".env not found - create it before deployment"
 fi
 
 # 2. Check Docker and Docker Compose
@@ -128,8 +127,8 @@ fi
 
 # 9. Test environment variables
 echo -e "\n${BLUE}9. Environment Variables${NC}"
-if grep -q "SUPABASE_URL" .env.local 2>/dev/null; then
-    SUPABASE_URL=$(grep SUPABASE_URL .env.local | cut -d '=' -f 2)
+if grep -q "SUPABASE_URL" .env 2>/dev/null; then
+    SUPABASE_URL=$(grep SUPABASE_URL .env | cut -d '=' -f 2)
     if [ ! -z "$SUPABASE_URL" ] && [ "$SUPABASE_URL" != "" ]; then
         echo -e "${GREEN}✓ SUPABASE_URL configured${NC}"
     else
@@ -137,8 +136,8 @@ if grep -q "SUPABASE_URL" .env.local 2>/dev/null; then
     fi
 fi
 
-if grep -q "OPENAI_API_KEY" .env.local 2>/dev/null; then
-    OPENAI_KEY=$(grep OPENAI_API_KEY .env.local | cut -d '=' -f 2)
+if grep -q "OPENAI_API_KEY" .env 2>/dev/null; then
+    OPENAI_KEY=$(grep OPENAI_API_KEY .env | cut -d '=' -f 2)
     if [ ! -z "$OPENAI_KEY" ] && [ "$OPENAI_KEY" != "" ]; then
         echo -e "${GREEN}✓ OPENAI_API_KEY configured${NC}"
     else
@@ -176,7 +175,7 @@ echo -e "${BLUE}Validation Summary${NC}"
 echo -e "${BLUE}================================================${NC}\n"
 
 echo -e "${YELLOW}Next Steps:${NC}"
-echo "1. Ensure all required environment variables are set in .env.local"
+echo "1. Ensure all required environment variables are set in .env"
 echo "2. Test with: docker-compose up --build"
 echo "3. Check health: curl http://localhost:8000/health"
 echo "4. Access frontend: http://localhost:3000"
@@ -185,7 +184,7 @@ echo ""
 
 echo -e "${YELLOW}For Production Deployment:${NC}"
 echo "1. Follow instructions in DEPLOYMENT.md"
-echo "2. Use .env.production as template"
+echo "2. Use the same .env file with production-safe values"
 echo "3. Configure SSL certificates"
 echo "4. Set up database backups"
 echo "5. Configure monitoring and logging"

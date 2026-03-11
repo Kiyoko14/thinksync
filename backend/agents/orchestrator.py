@@ -1,4 +1,4 @@
-from agents.agents import PlannerAgent, ActionAgent, BuilderAgent, DebuggerAgent, AuditorAgent
+from agents.agents import PlannerAgent, ActionAgent, BuilderAgent, DebuggerAgent, AuditorAgent, AutonomousDevOpsAgent
 from config import redis_client, supabase
 from services.execution import execute_action
 import json
@@ -12,6 +12,7 @@ class Orchestrator:
         self.builder = BuilderAgent()
         self.debugger = DebuggerAgent()
         self.auditor = AuditorAgent()
+        self.autonomous = AutonomousDevOpsAgent()
 
     async def process_message(self, chat_id: str, message: str):
         if not supabase:
@@ -56,34 +57,39 @@ class Orchestrator:
                 if task_data:
                     task = json.loads(task_data)
 
-            plan = await self.planner.create_plan(message)
             task["state"] = "PLANNED"
             _persist_task_state(task)
 
-            action_bundle = await self.action_agent.generate_action(plan)
-            action = (action_bundle.get("actions") or [{}])[0] if isinstance(action_bundle, dict) else {}
-            task["state"] = "ACTION_GENERATED"
-            _persist_task_state(task)
+            auto_result = await self.autonomous.run(
+                message,
+                {
+                    "environment": "production",
+                    "task_id": task_id,
+                },
+            )
 
-            await self.builder.build(action, {})
-            task["state"] = "BUILDING"
-            _persist_task_state(task)
-
-            if action.get("server_id"):
-                result = await execute_action(action)
-                task["state"] = "EXECUTING" if result.get("status") == "success" else "DEBUGGING"
-            else:
-                task["state"] = "EXECUTING"
-            _persist_task_state(task)
-
-            audit_result = await self.auditor.audit(action)
-            if isinstance(audit_result, dict) and audit_result.get("approved", False):
-                task["state"] = "AUDITING"
-                _persist_task_state(task)
+            status = auto_result.get("status")
+            if status == "completed":
                 task["state"] = "COMPLETED"
+            elif status == "blocked":
+                task["state"] = "AUDITING"
             else:
                 task["state"] = "FAILED"
+
+            task["autonomous_result"] = auto_result
             _persist_task_state(task)
+
+            # Keep compatibility with external executor for server-bound commands.
+            if status == "completed":
+                actions = auto_result.get("actions", [])
+                for action in actions:
+                    if action.get("server_id"):
+                        result = await execute_action(action)
+                        if result.get("status") != "success":
+                            task["state"] = "DEBUGGING"
+                            task["execution_error"] = result
+                            _persist_task_state(task)
+                            break
         except Exception as e:
             print(f"Error in task processing: {e}")
             if redis_client:

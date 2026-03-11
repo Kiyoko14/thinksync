@@ -9,7 +9,7 @@ import {
   Check,
   ArrowRight,
 } from "lucide-react";
-import Footer from "../components/Footer";
+import Footer from "@/components/Footer";
 
 const features = [
   {

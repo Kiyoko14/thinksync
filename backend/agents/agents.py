@@ -1,4 +1,4 @@
-from config import redis_client, openai_client
+from config import redis_client, openai_client, openai_model
 import json
 import re
 from typing import Dict, List, Any, Optional
@@ -59,7 +59,7 @@ Action types: create_directory, write_file, run_command, install_package, config
             ]
 
             response = openai_client.chat.completions.create(
-                model="gpt-4",
+                model=openai_model,
                 messages=messages,
                 temperature=0.1,  # Low temperature for consistent planning
                 max_tokens=2000
@@ -214,7 +214,7 @@ Action types: run_command, create_file, modify_file, install_package, start_serv
             ]
 
             response = openai_client.chat.completions.create(
-                model="gpt-4",
+                model=openai_model,
                 messages=messages,
                 temperature=0.2,
                 max_tokens=1500
@@ -427,7 +427,7 @@ Always respond with a valid JSON object containing:
             ]
 
             response = openai_client.chat.completions.create(
-                model="gpt-4",
+                model=openai_model,
                 messages=messages,
                 temperature=0.1,
                 max_tokens=1500
@@ -538,7 +538,7 @@ Always respond with a valid JSON object containing:
             ]
 
             response = openai_client.chat.completions.create(
-                model="gpt-4",
+                model=openai_model,
                 messages=messages,
                 temperature=0.1,
                 max_tokens=1200
@@ -614,4 +614,106 @@ Always respond with a valid JSON object containing:
                 "Regular security audits"
             ],
             "approved": approved
+        }
+
+
+class AutonomousDevOpsAgent:
+    """Autonomous meta-agent that plans, executes, audits, and self-heals."""
+
+    MAX_ATTEMPTS = 3
+
+    def __init__(self):
+        self.planner = PlannerAgent()
+        self.action_agent = ActionAgent()
+        self.builder = BuilderAgent()
+        self.debugger = DebuggerAgent()
+        self.auditor = AuditorAgent()
+
+    async def run(self, user_request: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        context = context or {}
+        history: List[Dict[str, Any]] = []
+        last_error = ""
+
+        for attempt in range(1, self.MAX_ATTEMPTS + 1):
+            try:
+                plan = await self.planner.create_plan(user_request, context)
+                action_bundle = await self.action_agent.generate_action(plan, context)
+                actions = action_bundle.get("actions", []) if isinstance(action_bundle, dict) else []
+
+                if not actions:
+                    return {
+                        "status": "failed",
+                        "attempt": attempt,
+                        "error": "No actions generated",
+                        "history": history,
+                    }
+
+                step_results: List[Dict[str, Any]] = []
+
+                for action in actions:
+                    audit = await self.auditor.audit(action, context)
+                    if not audit.get("approved", False):
+                        step_results.append({
+                            "action": action,
+                            "audit": audit,
+                            "result": {"status": "blocked", "reason": "audit_rejected"}
+                        })
+                        return {
+                            "status": "blocked",
+                            "attempt": attempt,
+                            "history": history + step_results,
+                            "error": "Action rejected by security auditor",
+                        }
+
+                    build_result = await self.builder.build(action, context.get("server_config", {}))
+                    step_results.append({
+                        "action": action,
+                        "audit": audit,
+                        "result": build_result,
+                    })
+
+                    if build_result.get("status") != "success":
+                        last_error = build_result.get("message", "Unknown execution failure")
+                        debug = await self.debugger.debug(last_error, {
+                            "environment": context.get("environment", "production"),
+                            "action_type": action.get("type", "run_command"),
+                            "server": context.get("server_config", {}),
+                            "logs": [build_result.get("output", "")],
+                        })
+                        history.extend(step_results)
+                        history.append({"debug": debug, "attempt": attempt})
+
+                        # Feed fixes into the next planning round for self-healing.
+                        context = {
+                            **context,
+                            "previous_error": last_error,
+                            "debug_fixes": debug.get("fixes", []),
+                            "previous_attempt": attempt,
+                        }
+                        break
+                else:
+                    history.extend(step_results)
+                    return {
+                        "status": "completed",
+                        "attempt": attempt,
+                        "plan": plan,
+                        "actions": actions,
+                        "history": history,
+                    }
+
+            except Exception as e:
+                last_error = str(e)
+                debug = await self.debugger.debug(last_error, {
+                    "environment": context.get("environment", "production"),
+                    "action_type": "orchestration",
+                    "server": context.get("server_config", {}),
+                    "logs": [],
+                })
+                history.append({"debug": debug, "attempt": attempt})
+
+        return {
+            "status": "failed",
+            "attempt": self.MAX_ATTEMPTS,
+            "error": last_error or "Autonomous execution failed",
+            "history": history,
         }

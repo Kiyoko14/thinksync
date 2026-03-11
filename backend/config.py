@@ -4,8 +4,13 @@ from dotenv import load_dotenv
 import redis
 from typing import Optional
 from openai import OpenAI
+from pathlib import Path
 
-load_dotenv()
+# Strictly load configuration only from backend/.env
+ENV_FILE = Path(__file__).resolve().parent / ".env"
+if not ENV_FILE.exists():
+    raise RuntimeError(f"Required environment file not found: {ENV_FILE}")
+load_dotenv(dotenv_path=ENV_FILE, override=True)
 
 # Supabase
 supabase_url = os.getenv("SUPABASE_URL")
@@ -38,6 +43,7 @@ else:
 
 # OpenAI
 openai_key = os.getenv("OPENAI_API_KEY")
+openai_model = os.getenv("OPENAI_MODEL", "gpt-4o")
 openai_client: Optional[OpenAI] = None
 if openai_key:
     try:
