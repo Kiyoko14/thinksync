@@ -8,7 +8,7 @@ type ServerFormData = {
   host: string;
   ssh_user: string;
   ssh_port: number;
-  auth_method: "private_key" | "password";
+  ssh_auth_method: "private_key" | "password";
   ssh_key: string;
   ssh_password: string;
 };
@@ -23,7 +23,7 @@ export default function ServersPage() {
     host: "",
     ssh_user: "",
     ssh_port: 22,
-    auth_method: "private_key",
+    ssh_auth_method: "private_key",
     ssh_key: "",
     ssh_password: "",
   });
@@ -56,9 +56,9 @@ export default function ServersPage() {
         host: formData.host,
         ssh_user: formData.ssh_user,
         ssh_port: formData.ssh_port,
-        auth_method: formData.auth_method,
-        ssh_key: formData.auth_method === "private_key" ? formData.ssh_key : undefined,
-        ssh_password: formData.auth_method === "password" ? formData.ssh_password : undefined,
+        ssh_auth_method: formData.ssh_auth_method,
+        ssh_key: formData.ssh_auth_method === "private_key" ? formData.ssh_key : undefined,
+        ssh_password: formData.ssh_auth_method === "password" ? formData.ssh_password : undefined,
       };
 
       if (editingId) {
@@ -74,7 +74,7 @@ export default function ServersPage() {
         host: "",
         ssh_user: "",
         ssh_port: 22,
-        auth_method: "private_key",
+        ssh_auth_method: "private_key",
         ssh_key: "",
         ssh_password: "",
       });
@@ -99,13 +99,12 @@ export default function ServersPage() {
   };
 
   const handleEdit = (server: Server) => {
-    const authMethod = server.ssh_auth_method ?? "private_key";
     setFormData({
       name: server.name,
       host: server.host,
       ssh_user: server.ssh_user,
       ssh_port: server.ssh_port,
-      auth_method: authMethod,
+      ssh_auth_method: server.ssh_auth_method ?? "private_key",
       ssh_key: "",
       ssh_password: "",
     });
@@ -121,7 +120,7 @@ export default function ServersPage() {
       host: "",
       ssh_user: "",
       ssh_port: 22,
-      auth_method: "private_key",
+      ssh_auth_method: "private_key",
       ssh_key: "",
       ssh_password: "",
     });
@@ -231,9 +230,9 @@ export default function ServersPage() {
               <div className="grid grid-cols-2 gap-2 mb-4">
                 <button
                   type="button"
-                  onClick={() => setFormData({ ...formData, auth_method: "private_key", ssh_password: "" })}
+                  onClick={() => setFormData({ ...formData, ssh_auth_method: "private_key", ssh_password: "" })}
                   className={`px-4 py-2 rounded-lg border text-sm transition ${
-                    formData.auth_method === "private_key"
+                    formData.ssh_auth_method === "private_key"
                       ? "border-blue-500 bg-blue-500/20 text-blue-300"
                       : "border-slate-600 bg-slate-700 text-slate-300"
                   }`}
@@ -242,9 +241,9 @@ export default function ServersPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setFormData({ ...formData, auth_method: "password", ssh_key: "" })}
+                  onClick={() => setFormData({ ...formData, ssh_auth_method: "password", ssh_key: "" })}
                   className={`px-4 py-2 rounded-lg border text-sm transition ${
-                    formData.auth_method === "password"
+                    formData.ssh_auth_method === "password"
                       ? "border-blue-500 bg-blue-500/20 text-blue-300"
                       : "border-slate-600 bg-slate-700 text-slate-300"
                   }`}
@@ -253,7 +252,7 @@ export default function ServersPage() {
                 </button>
               </div>
 
-              {formData.auth_method === "private_key" ? (
+              {formData.ssh_auth_method === "private_key" ? (
                 <textarea
                   value={formData.ssh_key}
                   onChange={(e) => setFormData({ ...formData, ssh_key: e.target.value })}
