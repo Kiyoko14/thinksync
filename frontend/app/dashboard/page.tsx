@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
-import { Activity, HardDrive, Plus, ServerIcon, ShieldCheck } from "lucide-react";
+import { KeyRound, Lock, Network, Plus, ServerIcon } from "lucide-react";
 import { apiClient, Server } from "@/lib/api";
 
 type NewServerForm = {
@@ -10,6 +10,9 @@ type NewServerForm = {
   host: string;
   ssh_user: string;
   ssh_port: number;
+  auth_method: "private_key" | "password";
+  ssh_key: string;
+  ssh_password: string;
 };
 
 const initialForm: NewServerForm = {
@@ -17,6 +20,9 @@ const initialForm: NewServerForm = {
   host: "",
   ssh_user: "ubuntu",
   ssh_port: 22,
+  auth_method: "private_key",
+  ssh_key: "",
+  ssh_password: "",
 };
 
 export default function DashboardPage() {
@@ -48,7 +54,15 @@ export default function DashboardPage() {
     setCreatingServer(true);
 
     try {
-      await apiClient.createServer({ ...form, ssh_key: "local-managed-key" });
+      await apiClient.createServer({
+        name: form.name,
+        host: form.host,
+        ssh_user: form.ssh_user,
+        ssh_port: form.ssh_port,
+        auth_method: form.auth_method,
+        ssh_key: form.auth_method === "private_key" ? form.ssh_key : undefined,
+        ssh_password: form.auth_method === "password" ? form.ssh_password : undefined,
+      });
       setForm(initialForm);
       setModalOpen(false);
       await loadServers();
@@ -59,30 +73,46 @@ export default function DashboardPage() {
     }
   };
 
+  const keyAuthCount = servers.filter((server) => {
+    if (server.ssh_auth_method) {
+      return server.ssh_auth_method === "private_key";
+    }
+    return Boolean(server.ssh_key);
+  }).length;
+
+  const passwordAuthCount = servers.filter((server) => {
+    if (server.ssh_auth_method) {
+      return server.ssh_auth_method === "password";
+    }
+    return false;
+  }).length;
+
+  const uniqueHosts = new Set(servers.map((server) => server.host)).size;
+
   const metrics = [
     {
       label: "Total Servers",
       value: servers.length,
       icon: ServerIcon,
-      description: "Connected infrastructure endpoints",
+      description: "Configured infrastructure endpoints",
     },
     {
-      label: "Active Servers",
-      value: servers.length,
-      icon: Activity,
-      description: "Reachable and currently online",
+      label: "Private Key Auth",
+      value: keyAuthCount,
+      icon: KeyRound,
+      description: "Servers using private key login",
     },
     {
-      label: "Coverage",
-      value: "100%",
-      icon: ShieldCheck,
-      description: "Server safety validation enabled",
+      label: "Password Auth",
+      value: passwordAuthCount,
+      icon: Lock,
+      description: "Servers using password login",
     },
     {
-      label: "Storage Type",
-      value: "Managed",
-      icon: HardDrive,
-      description: "Provisioned through ThinkSync",
+      label: "Unique Hosts",
+      value: uniqueHosts,
+      icon: Network,
+      description: "Distinct host targets in inventory",
     },
   ];
 
@@ -161,7 +191,7 @@ export default function DashboardPage() {
                     <h3 className="text-lg font-semibold text-white">{server.name}</h3>
                     <p className="mt-1 text-sm text-slate-400">{server.host}</p>
                   </div>
-                  <span className="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-3 py-1 text-xs text-emerald-300">Online</span>
+                  <span className="rounded-full border border-slate-600 bg-slate-800 px-3 py-1 text-xs text-slate-300">Configured</span>
                 </div>
 
                 <div className="mt-5 space-y-1 text-sm text-slate-300">
@@ -217,6 +247,54 @@ export default function DashboardPage() {
                   className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm outline-none focus:border-blue-500"
                 />
               </div>
+
+              <div>
+                <p className="mb-2 text-sm text-slate-300">SSH Authentication</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setForm((prev) => ({ ...prev, auth_method: "private_key", ssh_password: "" }))}
+                    className={`rounded-xl border px-4 py-2 text-sm transition ${
+                      form.auth_method === "private_key"
+                        ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                        : "border-slate-700 bg-slate-800 text-slate-300"
+                    }`}
+                  >
+                    Private Key
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm((prev) => ({ ...prev, auth_method: "password", ssh_key: "" }))}
+                    className={`rounded-xl border px-4 py-2 text-sm transition ${
+                      form.auth_method === "password"
+                        ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                        : "border-slate-700 bg-slate-800 text-slate-300"
+                    }`}
+                  >
+                    Password
+                  </button>
+                </div>
+              </div>
+
+              {form.auth_method === "private_key" ? (
+                <textarea
+                  required
+                  rows={5}
+                  value={form.ssh_key}
+                  onChange={(event) => setForm((prev) => ({ ...prev, ssh_key: event.target.value }))}
+                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 font-mono text-sm outline-none focus:border-blue-500"
+                />
+              ) : (
+                <input
+                  required
+                  type="password"
+                  value={form.ssh_password}
+                  onChange={(event) => setForm((prev) => ({ ...prev, ssh_password: event.target.value }))}
+                  placeholder="SSH password"
+                  className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm outline-none focus:border-blue-500"
+                />
+              )}
 
               <div className="flex gap-3 pt-2">
                 <button

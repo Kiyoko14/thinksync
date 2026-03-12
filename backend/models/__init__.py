@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Literal
 from datetime import datetime
 
 class User(BaseModel):
@@ -14,7 +14,9 @@ class Server(BaseModel):
     host: str
     ssh_user: str
     ssh_port: int = 22
-    ssh_key: str
+    ssh_auth_method: Literal["private_key", "password"] = "private_key"
+    ssh_key: Optional[str] = None
+    ssh_password: Optional[str] = None
     created_at: datetime
 
 class Chat(BaseModel):

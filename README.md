@@ -24,7 +24,7 @@ ThinkSync is a comprehensive DevOps automation platform powered by AI agents. It
 - **Database**: Supabase (PostgreSQL)
 - **Cache**: Redis 5.0.1
 - **AI**: OpenAI API
-- **Server Communication**: Paramiko (SSH)
+- **Server Communication**: AsyncSSH
 - **Authentication**: Python-Jose with encryption
 
 ### Frontend

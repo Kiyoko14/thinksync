@@ -3,17 +3,29 @@
 import { useState, useEffect } from "react";
 import { apiClient, Server } from "@/lib/api";
 
+type ServerFormData = {
+  name: string;
+  host: string;
+  ssh_user: string;
+  ssh_port: number;
+  auth_method: "private_key" | "password";
+  ssh_key: string;
+  ssh_password: string;
+};
+
 export default function ServersPage() {
   const [servers, setServers] = useState<Server[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<ServerFormData>({
     name: "",
     host: "",
     ssh_user: "",
     ssh_port: 22,
+    auth_method: "private_key",
     ssh_key: "",
+    ssh_password: "",
   });
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -39,11 +51,21 @@ export default function ServersPage() {
     setSuccess("");
 
     try {
+      const payload = {
+        name: formData.name,
+        host: formData.host,
+        ssh_user: formData.ssh_user,
+        ssh_port: formData.ssh_port,
+        auth_method: formData.auth_method,
+        ssh_key: formData.auth_method === "private_key" ? formData.ssh_key : undefined,
+        ssh_password: formData.auth_method === "password" ? formData.ssh_password : undefined,
+      };
+
       if (editingId) {
-        await apiClient.updateServer(editingId, formData);
+        await apiClient.updateServer(editingId, payload);
         setSuccess("Server updated successfully");
       } else {
-        await apiClient.createServer(formData);
+        await apiClient.createServer(payload);
         setSuccess("Server created successfully");
       }
 
@@ -52,7 +74,9 @@ export default function ServersPage() {
         host: "",
         ssh_user: "",
         ssh_port: 22,
+        auth_method: "private_key",
         ssh_key: "",
+        ssh_password: "",
       });
       setShowForm(false);
       setEditingId(null);
@@ -75,12 +99,15 @@ export default function ServersPage() {
   };
 
   const handleEdit = (server: Server) => {
+    const authMethod = server.ssh_auth_method ?? "private_key";
     setFormData({
       name: server.name,
       host: server.host,
       ssh_user: server.ssh_user,
       ssh_port: server.ssh_port,
+      auth_method: authMethod,
       ssh_key: "",
+      ssh_password: "",
     });
     setEditingId(server.id);
     setShowForm(true);
@@ -94,7 +121,9 @@ export default function ServersPage() {
       host: "",
       ssh_user: "",
       ssh_port: 22,
+      auth_method: "private_key",
       ssh_key: "",
+      ssh_password: "",
     });
   };
 
@@ -197,18 +226,52 @@ export default function ServersPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-300 mb-2">
-                SSH Key (paste your private key)
+                SSH Authentication
               </label>
-              <textarea
-                value={formData.ssh_key}
-                onChange={(e) =>
-                  setFormData({ ...formData, ssh_key: e.target.value })
-                }
-                placeholder="-----BEGIN RSA PRIVATE KEY-----"
-                required
-                rows={6}
-                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-              />
+              <div className="grid grid-cols-2 gap-2 mb-4">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, auth_method: "private_key", ssh_password: "" })}
+                  className={`px-4 py-2 rounded-lg border text-sm transition ${
+                    formData.auth_method === "private_key"
+                      ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                      : "border-slate-600 bg-slate-700 text-slate-300"
+                  }`}
+                >
+                  Private Key
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, auth_method: "password", ssh_key: "" })}
+                  className={`px-4 py-2 rounded-lg border text-sm transition ${
+                    formData.auth_method === "password"
+                      ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                      : "border-slate-600 bg-slate-700 text-slate-300"
+                  }`}
+                >
+                  Password
+                </button>
+              </div>
+
+              {formData.auth_method === "private_key" ? (
+                <textarea
+                  value={formData.ssh_key}
+                  onChange={(e) => setFormData({ ...formData, ssh_key: e.target.value })}
+                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                  required
+                  rows={6}
+                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                />
+              ) : (
+                <input
+                  type="password"
+                  value={formData.ssh_password}
+                  onChange={(e) => setFormData({ ...formData, ssh_password: e.target.value })}
+                  placeholder="SSH password"
+                  required
+                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              )}
             </div>
             <div className="flex space-x-4">
               <button

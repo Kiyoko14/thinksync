@@ -17,7 +17,6 @@ export default function Navbar() {
         <div className="hidden md:flex gap-6">
           <Link href="/dashboard">Dashboard</Link>
           <Link href="/dashboard/servers">Servers</Link>
-          <Link href="/dashboard/chats">Chats</Link>
           <Link href="/dashboard/databases">Databases</Link>
         </div>
 
@@ -33,7 +32,6 @@ export default function Navbar() {
         <div className="md:hidden px-4 pb-4 flex flex-col gap-3">
           <Link href="/dashboard">Dashboard</Link>
           <Link href="/dashboard/servers">Servers</Link>
-          <Link href="/dashboard/chats">Chats</Link>
         </div>
       )}
     </nav>

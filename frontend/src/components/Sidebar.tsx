@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Bot, Database, LayoutDashboard, Rocket, Server, Settings } from 'lucide-react';
+import { Database, LayoutDashboard, Rocket, Server, Settings } from 'lucide-react';
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -10,7 +10,6 @@ export default function Sidebar() {
   const menuItems = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/dashboard/servers', label: 'Servers', icon: Server },
-    { href: '/dashboard/chats', label: 'Chats', icon: Bot },
     { href: '/dashboard/deployments', label: 'Deployments', icon: Rocket },
     { href: '/dashboard/databases', label: 'Databases', icon: Database },
     { href: '/dashboard/settings', label: 'Settings', icon: Settings },

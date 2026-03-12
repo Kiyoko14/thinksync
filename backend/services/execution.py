@@ -1,6 +1,7 @@
 from config import redis_client, supabase
 import asyncio
 from typing import Dict, Any
+import asyncssh
 
 class ExecutionSandbox:
     def __init__(self):
@@ -40,16 +41,87 @@ class ExecutionSandbox:
                 # Validate command is not empty
                 if not command.strip():
                     return {"status": "error", "reason": "empty command"}
+
+                timeout = int(action.get("timeout", 30))
+                result = await self._run_ssh_command(command, server_config, timeout)
+                result["timestamp"] = str(asyncio.get_event_loop().time())
+                return result
             
-            # For demo purposes, return success with safety
+            # Non-command actions are acknowledged as accepted.
             return {
                 "status": "success", 
-                "output": "Command executed successfully", 
+                "output": "Action accepted", 
                 "error": "",
                 "timestamp": str(asyncio.get_event_loop().time())
             }
         except Exception as e:
             return {"status": "error", "error": str(e)}
+
+    async def _run_ssh_command(self, command: str, server_config: Dict[str, Any], timeout: int) -> Dict[str, Any]:
+        host = server_config.get("host")
+        username = server_config.get("username") or server_config.get("ssh_user")
+        port = int(server_config.get("port") or server_config.get("ssh_port") or 22)
+        auth_method = server_config.get("auth_method") or server_config.get("ssh_auth_method")
+        ssh_key = server_config.get("ssh_key")
+        ssh_password = server_config.get("ssh_password") or server_config.get("password")
+
+        if not host or not username:
+            return {
+                "status": "error",
+                "error": "Missing SSH connection fields: host or username",
+                "output": "",
+            }
+
+        if auth_method not in {"private_key", "password"}:
+            # Backward compatibility: old records only had ssh_key.
+            auth_method = "private_key" if ssh_key else "password"
+
+        connect_kwargs: Dict[str, Any] = {
+            "host": host,
+            "port": port,
+            "username": username,
+            "known_hosts": None,
+        }
+
+        if auth_method == "password":
+            if not ssh_password:
+                return {
+                    "status": "error",
+                    "error": "Password auth selected but ssh_password is empty",
+                    "output": "",
+                }
+            connect_kwargs["password"] = ssh_password
+        else:
+            if not ssh_key:
+                return {
+                    "status": "error",
+                    "error": "Private key auth selected but ssh_key is empty",
+                    "output": "",
+                }
+            private_key = asyncssh.import_private_key(ssh_key)
+            connect_kwargs["client_keys"] = [private_key]
+
+        try:
+            async with asyncssh.connect(**connect_kwargs) as conn:
+                command_result = await conn.run(command, check=False, timeout=timeout)
+                return {
+                    "status": "success" if command_result.exit_status == 0 else "error",
+                    "output": command_result.stdout,
+                    "error": command_result.stderr,
+                    "exit_status": command_result.exit_status,
+                }
+        except asyncio.TimeoutError:
+            return {
+                "status": "error",
+                "error": f"Command timed out after {timeout} seconds",
+                "output": "",
+            }
+        except (asyncssh.Error, OSError) as exc:
+            return {
+                "status": "error",
+                "error": str(exc),
+                "output": "",
+            }
 
 execution_sandbox = ExecutionSandbox()
 

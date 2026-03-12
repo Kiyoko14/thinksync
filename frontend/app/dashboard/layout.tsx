@@ -5,7 +5,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useState } from "react";
 import {
   Bell,
-  Bot,
   ChevronRight,
   Database,
   LayoutDashboard,
@@ -27,7 +26,6 @@ type MenuItem = {
 const menuItems: MenuItem[] = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Servers", href: "/dashboard/servers", icon: Server },
-  { name: "Chats", href: "/dashboard/chats", icon: Bot },
   { name: "Deployments", href: "/dashboard/deployments", icon: Rocket },
   { name: "Databases", href: "/dashboard/databases", icon: Database },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
