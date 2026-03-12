@@ -18,7 +18,7 @@ class CreateServerRequest(BaseModel):
     host: str
     ssh_user: str
     ssh_port: int = 22
-    auth_method: Literal["private_key", "password"] = "private_key"
+    ssh_auth_method: Literal["private_key", "password"] = "private_key"
     ssh_key: str | None = None
     ssh_password: str | None = None
 
@@ -33,10 +33,10 @@ class ExecuteCommandRequest(BaseModel):
 
 
 def _build_server_payload(request: CreateServerRequest, current_user: dict) -> Dict[str, Any]:
-    auth_method = request.auth_method
-    if auth_method == "private_key" and not request.ssh_key:
+    ssh_auth_method = request.ssh_auth_method
+    if ssh_auth_method == "private_key" and not request.ssh_key:
         raise HTTPException(status_code=400, detail="ssh_key is required for private_key auth")
-    if auth_method == "password" and not request.ssh_password:
+    if ssh_auth_method == "password" and not request.ssh_password:
         raise HTTPException(status_code=400, detail="ssh_password is required for password auth")
 
     return {
@@ -46,9 +46,9 @@ def _build_server_payload(request: CreateServerRequest, current_user: dict) -> D
         "host": request.host,
         "ssh_user": request.ssh_user,
         "ssh_port": request.ssh_port,
-        "ssh_auth_method": auth_method,
-        "ssh_key": request.ssh_key if auth_method == "private_key" else None,
-        "ssh_password": request.ssh_password if auth_method == "password" else None,
+        "ssh_auth_method": ssh_auth_method,
+        "ssh_key": request.ssh_key if ssh_auth_method == "private_key" else None,
+        "ssh_password": request.ssh_password if ssh_auth_method == "password" else None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 

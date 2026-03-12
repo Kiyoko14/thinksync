@@ -61,7 +61,7 @@ class ExecutionSandbox:
         host = server_config.get("host")
         username = server_config.get("username") or server_config.get("ssh_user")
         port = int(server_config.get("port") or server_config.get("ssh_port") or 22)
-        auth_method = server_config.get("auth_method") or server_config.get("ssh_auth_method")
+        ssh_auth_method = server_config.get("ssh_auth_method")
         ssh_key = server_config.get("ssh_key")
         ssh_password = server_config.get("ssh_password") or server_config.get("password")
 
@@ -72,9 +72,9 @@ class ExecutionSandbox:
                 "output": "",
             }
 
-        if auth_method not in {"private_key", "password"}:
+        if ssh_auth_method not in {"private_key", "password"}:
             # Backward compatibility: old records only had ssh_key.
-            auth_method = "private_key" if ssh_key else "password"
+            ssh_auth_method = "private_key" if ssh_key else "password"
 
         connect_kwargs: Dict[str, Any] = {
             "host": host,
@@ -83,7 +83,7 @@ class ExecutionSandbox:
             "known_hosts": None,
         }
 
-        if auth_method == "password":
+        if ssh_auth_method == "password":
             if not ssh_password:
                 return {
                     "status": "error",
