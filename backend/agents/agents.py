@@ -1,4 +1,5 @@
 from config import redis_client, openai_client, openai_model, supabase
+from agents.memory import agent_memory
 import json
 import re
 import hashlib
@@ -90,11 +91,19 @@ Action types: create_directory, write_file, run_command, install_package, config
     async def create_plan(self, user_request: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """Create a comprehensive deployment plan.
 
-        Results are cached in Redis (1 hour) by a hash of the request so
-        repeated or similar requests skip the OpenAI round-trip entirely.
-        Every new plan is persisted to Supabase for auditing.
+        Memory usage (E1):
+        - Retrieves conversation history from Redis/Supabase and injects it as
+          additional context so the planner understands what happened before.
+        - Retrieves up to 3 successful past experiences for similar requests
+          from Supabase and injects them as learned examples.
+        - Caches the resulting plan in Redis (1 h) to avoid repeated API calls.
+        - Records the plan as an experience in Supabase for future retrieval.
+        - Tracks call/hit counters in Redis for performance monitoring.
+        - Publishes a 'plan_created' event to the Redis pub/sub channel.
         """
         try:
+            agent_memory.inc_stat("planner", "calls")
+
             if not openai_client:
                 return self._fallback_plan(user_request)
 
@@ -104,7 +113,15 @@ Action types: create_directory, write_file, run_command, install_package, config
             cached = _get_cached(ckey)
             if cached:
                 print(f"PlannerAgent: cache hit ({ckey})")
+                agent_memory.inc_stat("planner", "cache_hits")
                 return cached
+
+            # ── Memory retrieval ──────────────────────────────────────────
+            chat_id = (context or {}).get("chat_id", "")
+            task_id = (context or {}).get("task_id", "")
+
+            conversation = agent_memory.get_conversation(chat_id, limit=6) if chat_id else []
+            past_experiences = agent_memory.get_experiences("planner", user_request[:80])
 
             # Enhanced context for better planning
             enhanced_context = {
@@ -112,13 +129,37 @@ Action types: create_directory, write_file, run_command, install_package, config
                 "available_servers": context.get("servers", []) if context else [],
                 "current_environment": context.get("environment", "production") if context else "production",
                 "technologies": self._extract_technologies(user_request),
-                "complexity": self._assess_complexity(user_request)
+                "complexity": self._assess_complexity(user_request),
+                "previous_errors": (context or {}).get("previous_error"),
+                "debug_fixes": (context or {}).get("debug_fixes", []),
             }
 
-            messages = [
+            messages: List[Dict[str, str]] = [
                 {"role": "system", "content": self.SYSTEM_PROMPT},
-                {"role": "user", "content": f"Create a deployment plan for: {json.dumps(enhanced_context, indent=2)}"}
             ]
+
+            # Inject conversation history so the planner is aware of context
+            if conversation:
+                messages.append({
+                    "role": "user",
+                    "content": f"Recent conversation context:\n{json.dumps(conversation, indent=2)}"
+                })
+
+            # Inject past successful experiences
+            if past_experiences:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Past successful deployments for similar requests "
+                        "(use as reference, adapt as needed):\n"
+                        + json.dumps([e.get("payload") for e in past_experiences], indent=2)
+                    )
+                })
+
+            messages.append({
+                "role": "user",
+                "content": f"Create a deployment plan for: {json.dumps(enhanced_context, indent=2)}"
+            })
 
             response = openai_client.chat.completions.create(
                 model=openai_model,
@@ -144,11 +185,31 @@ Action types: create_directory, write_file, run_command, install_package, config
             # ── Persist to Redis and Supabase ─────────────────────────────
             _set_cached(ckey, plan, ttl=3600)
             _save_agent_log("planner", ckey, plan)
+            agent_memory.inc_stat("planner", "successes")
+
+            # Record experience for future retrieval
+            agent_memory.save_experience(
+                chat_id=chat_id,
+                task_id=task_id,
+                agent="planner",
+                request_pattern=user_request[:200],
+                outcome="success",
+                payload=plan,
+            )
+
+            # Publish event so subscribers can react in real time
+            agent_memory.publish_event("plan_created", {
+                "chat_id": chat_id,
+                "task_id": task_id,
+                "risk_level": plan.get("risk_level", "unknown"),
+                "step_count": len(plan.get("plan", [])),
+            })
 
             return plan
 
         except Exception as e:
             print(f"PlannerAgent error: {e}")
+            agent_memory.inc_stat("planner", "failures")
             return self._fallback_plan(user_request)
 
     def _extract_technologies(self, request: str) -> List[str]:
@@ -259,10 +320,17 @@ Action types: run_command, create_file, modify_file, install_package, start_serv
     async def generate_action(self, plan: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
         """Generate executable actions from a plan.
 
-        Results are cached in Redis (30 min) by a hash of the plan so
-        identical plans skip the OpenAI round-trip.
+        Memory usage (E1):
+        - Checks Redis cache first (30 min TTL per plan hash).
+        - Retrieves successful past action sets for similar plans from Supabase
+          and injects them so the agent can reuse known-good action patterns.
+        - Persists new results to Redis + Supabase.
+        - Tracks call / cache-hit counters in Redis.
+        - Publishes an 'actions_generated' event to the pub/sub channel.
         """
         try:
+            agent_memory.inc_stat("action_agent", "calls")
+
             if not openai_client:
                 return self._fallback_actions(plan)
 
@@ -272,19 +340,42 @@ Action types: run_command, create_file, modify_file, install_package, start_serv
             cached = _get_cached(ckey)
             if cached:
                 print(f"ActionAgent: cache hit ({ckey})")
+                agent_memory.inc_stat("action_agent", "cache_hits")
                 return cached
 
-            context_info = {
+            # ── Memory retrieval ──────────────────────────────────────────
+            chat_id = (context or {}).get("chat_id", "")
+            task_id = (context or {}).get("task_id", "")
+            plan_summary = str(plan.get("plan", []))[:120]
+            past_experiences = agent_memory.get_experiences("action_agent", plan_summary)
+
+            context_info: Dict[str, Any] = {
                 "plan": plan,
                 "environment": context.get("environment", "production") if context else "production",
                 "available_servers": context.get("servers", []) if context else [],
-                "security_level": context.get("security", "standard") if context else "standard"
+                "security_level": context.get("security", "standard") if context else "standard",
+                "previous_attempt": (context or {}).get("previous_attempt"),
+                "debug_fixes": (context or {}).get("debug_fixes", []),
             }
 
-            messages = [
+            messages: List[Dict[str, str]] = [
                 {"role": "system", "content": self.SYSTEM_PROMPT},
-                {"role": "user", "content": f"Generate executable actions for this plan: {json.dumps(context_info, indent=2)}"}
             ]
+
+            if past_experiences:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Previously successful action sets for similar plans "
+                        "(reuse patterns where applicable):\n"
+                        + json.dumps([e.get("payload") for e in past_experiences], indent=2)
+                    )
+                })
+
+            messages.append({
+                "role": "user",
+                "content": f"Generate executable actions for this plan: {json.dumps(context_info, indent=2)}"
+            })
 
             response = openai_client.chat.completions.create(
                 model=openai_model,
@@ -310,11 +401,29 @@ Action types: run_command, create_file, modify_file, install_package, start_serv
             # ── Persist to Redis and Supabase ─────────────────────────────
             _set_cached(ckey, actions, ttl=1800)
             _save_agent_log("action", ckey, actions)
+            agent_memory.inc_stat("action_agent", "successes")
+
+            agent_memory.save_experience(
+                chat_id=chat_id,
+                task_id=task_id,
+                agent="action_agent",
+                request_pattern=plan_summary,
+                outcome="success",
+                payload=actions,
+            )
+
+            agent_memory.publish_event("actions_generated", {
+                "chat_id": chat_id,
+                "task_id": task_id,
+                "action_count": len(actions.get("actions", [])),
+                "parallel": actions.get("parallel_execution", False),
+            })
 
             return actions
 
         except Exception as e:
             print(f"ActionAgent error: {e}")
+            agent_memory.inc_stat("action_agent", "failures")
             return self._fallback_actions(plan)
 
     def _validate_actions(self, actions: Dict) -> bool:
@@ -453,8 +562,10 @@ Always provide detailed execution logs and status updates.
         # Safely quote the file path so special characters cannot break the command
         quoted_path = shlex.quote(file_path)
         dir_path = os.path.dirname(file_path)
-        mkdir_part = f"mkdir -p {shlex.quote(dir_path)} && " if dir_path else ""
-        command = f"{mkdir_part}printf '%s' '{content_b64}' | base64 -d > {quoted_path}"
+        mkdir_part = f"mkdir -p {shlex.quote(dir_path)} && " if dir_path and dir_path != "/" else ""
+        # Use double-quotes for the base64 payload (output is [A-Za-z0-9+/=] only,
+        # but double-quotes are semantically cleaner inside a shell command).
+        command = f'{mkdir_part}printf "%s" "{content_b64}" | base64 -d > {quoted_path}'
 
         result = await self._execute_command(
             {"command": command, "id": action.get("id")},
@@ -542,10 +653,18 @@ Always respond with a valid JSON object containing:
     async def debug(self, error: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """Debug an error and provide solutions.
 
-        Caches results in Redis (15 min) — the same error in the same
-        environment very likely has the same root cause and fixes.
+        Memory usage (E1):
+        - Checks Redis cache (15 min) — identical errors in the same env are
+          very likely to have the same root cause.
+        - Queries Supabase ``agent_experiences`` for known fixes of similar
+          errors and injects them, allowing the agent to self-heal faster on
+          repeated issues without an OpenAI round-trip.
+        - Records new fixes as experiences for future retrieval.
+        - Tracks stats and publishes 'debug_completed' events.
         """
         try:
+            agent_memory.inc_stat("debugger", "calls")
+
             if not openai_client:
                 return self._fallback_debug(error)
 
@@ -559,20 +678,40 @@ Always respond with a valid JSON object containing:
             cached = _get_cached(ckey)
             if cached:
                 print(f"DebuggerAgent: cache hit ({ckey})")
+                agent_memory.inc_stat("debugger", "cache_hits")
                 return cached
 
-            context_info = {
+            # ── Known-fix retrieval (long-term memory) ────────────────────
+            chat_id = (context or {}).get("chat_id", "")
+            task_id = (context or {}).get("task_id", "")
+            known_fixes = agent_memory.get_experiences("debugger", error[:80])
+
+            context_info: Dict[str, Any] = {
                 "error_message": error,
                 "environment": context.get("environment", "unknown") if context else "unknown",
                 "action_type": context.get("action_type", "unknown") if context else "unknown",
                 "server_info": context.get("server", {}) if context else {},
-                "logs": context.get("logs", []) if context else []
+                "logs": context.get("logs", []) if context else [],
             }
 
-            messages = [
+            messages: List[Dict[str, str]] = [
                 {"role": "system", "content": self.SYSTEM_PROMPT},
-                {"role": "user", "content": f"Debug this error: {json.dumps(context_info, indent=2)}"}
             ]
+
+            if known_fixes:
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Known fixes that resolved similar errors in the past "
+                        "(prefer these if they match the current situation):\n"
+                        + json.dumps([f.get("payload") for f in known_fixes], indent=2)
+                    )
+                })
+
+            messages.append({
+                "role": "user",
+                "content": f"Debug this error: {json.dumps(context_info, indent=2)}"
+            })
 
             response = openai_client.chat.completions.create(
                 model=openai_model,
@@ -598,11 +737,30 @@ Always respond with a valid JSON object containing:
             # ── Persist to Redis and Supabase ─────────────────────────────
             _set_cached(ckey, debug_result, ttl=900)
             _save_agent_log("debugger", ckey, debug_result)
+            agent_memory.inc_stat("debugger", "successes")
+
+            # Record as a known fix for future self-healing
+            agent_memory.save_experience(
+                chat_id=chat_id,
+                task_id=task_id,
+                agent="debugger",
+                request_pattern=error[:200],
+                outcome="success",
+                payload=debug_result,
+            )
+
+            agent_memory.publish_event("debug_completed", {
+                "chat_id": chat_id,
+                "task_id": task_id,
+                "severity": debug_result.get("severity", "unknown"),
+                "root_cause": debug_result.get("root_cause", "")[:120],
+            })
 
             return debug_result
 
         except Exception as e:
             print(f"DebuggerAgent error: {e}")
+            agent_memory.inc_stat("debugger", "failures")
             return self._fallback_debug(error)
 
     def _validate_debug_result(self, result: Dict) -> bool:
@@ -674,10 +832,15 @@ Always respond with a valid JSON object containing:
     async def audit(self, action: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
         """Audit an action for security and compliance.
 
-        Caches results in Redis (2 hours) — identical actions in the same
-        environment always receive the same audit decision.
+        Memory usage (E1):
+        - Caches results in Redis (2 hours) — identical actions in the same
+          environment always receive the same audit decision.
+        - Tracks call / cache-hit counters in Redis.
+        - Publishes 'audit_completed' events to the pub/sub channel.
         """
         try:
+            agent_memory.inc_stat("auditor", "calls")
+
             if not openai_client:
                 return self._fallback_audit(action)
 
@@ -690,6 +853,7 @@ Always respond with a valid JSON object containing:
             cached = _get_cached(ckey)
             if cached:
                 print(f"AuditorAgent: cache hit ({ckey})")
+                agent_memory.inc_stat("auditor", "cache_hits")
                 return cached
 
             audit_context = {
@@ -728,11 +892,23 @@ Always respond with a valid JSON object containing:
             # ── Persist to Redis and Supabase ─────────────────────────────
             _set_cached(ckey, audit_result, ttl=7200)
             _save_agent_log("auditor", ckey, audit_result)
+            agent_memory.inc_stat("auditor", "successes")
+
+            chat_id = (context or {}).get("chat_id", "")
+            task_id = (context or {}).get("task_id", "")
+            agent_memory.publish_event("audit_completed", {
+                "chat_id": chat_id,
+                "task_id": task_id,
+                "approved": audit_result.get("approved", False),
+                "risk_level": audit_result.get("risk_level", "unknown"),
+                "compliance_score": audit_result.get("compliance_score", 0),
+            })
 
             return audit_result
 
         except Exception as e:
             print(f"AuditorAgent error: {e}")
+            agent_memory.inc_stat("auditor", "failures")
             return self._fallback_audit(action)
 
     def _validate_audit_result(self, result: Dict) -> bool:
@@ -804,14 +980,41 @@ class AutonomousDevOpsAgent:
         context = context or {}
         history: List[Dict[str, Any]] = []
         last_error = ""
+        chat_id = context.get("chat_id", "")
+        task_id = context.get("task_id", "")
+
+        # ── Initialise working memory for this task ────────────────────────
+        agent_memory.set_working(task_id,
+            status="running",
+            attempt=0,
+            user_request=user_request[:200],
+            chat_id=chat_id,
+        )
+        agent_memory.inc_stat("autonomous", "calls")
+        agent_memory.publish_event("task_started", {
+            "chat_id": chat_id,
+            "task_id": task_id,
+            "request": user_request[:120],
+        })
 
         for attempt in range(1, self.MAX_ATTEMPTS + 1):
+            # Update working memory for each attempt
+            agent_memory.set_working(task_id, attempt=attempt, stage="planning")
+
             try:
                 plan = await self.planner.create_plan(user_request, context)
+                agent_memory.set_working(task_id, stage="action_generation",
+                                         plan_risk=plan.get("risk_level", "unknown"))
+
                 action_bundle = await self.action_agent.generate_action(plan, context)
                 actions = action_bundle.get("actions", []) if isinstance(action_bundle, dict) else []
 
                 if not actions:
+                    agent_memory.set_working(task_id, status="failed", error="no_actions")
+                    agent_memory.publish_event("task_failed", {
+                        "chat_id": chat_id, "task_id": task_id,
+                        "reason": "No actions generated", "attempt": attempt,
+                    })
                     return {
                         "status": "failed",
                         "attempt": attempt,
@@ -820,14 +1023,26 @@ class AutonomousDevOpsAgent:
                     }
 
                 step_results: List[Dict[str, Any]] = []
+                agent_memory.set_working(task_id, stage="executing",
+                                         total_actions=len(actions))
 
-                for action in actions:
+                for idx, action in enumerate(actions):
+                    agent_memory.set_working(task_id,
+                        current_action=idx + 1,
+                        action_type=action.get("type", "run_command"),
+                    )
+
                     audit = await self.auditor.audit(action, context)
                     if not audit.get("approved", False):
                         step_results.append({
                             "action": action,
                             "audit": audit,
                             "result": {"status": "blocked", "reason": "audit_rejected"}
+                        })
+                        agent_memory.set_working(task_id, status="blocked")
+                        agent_memory.publish_event("task_blocked", {
+                            "chat_id": chat_id, "task_id": task_id,
+                            "reason": "Action rejected by security auditor", "attempt": attempt,
                         })
                         return {
                             "status": "blocked",
@@ -845,11 +1060,16 @@ class AutonomousDevOpsAgent:
 
                     if build_result.get("status") != "success":
                         last_error = build_result.get("message", "Unknown execution failure")
+                        agent_memory.set_working(task_id, stage="debugging",
+                                                 last_error=last_error[:200])
+
                         debug = await self.debugger.debug(last_error, {
                             "environment": context.get("environment", "production"),
                             "action_type": action.get("type", "run_command"),
                             "server": context.get("server_config", {}),
                             "logs": [build_result.get("output", "")],
+                            "chat_id": chat_id,
+                            "task_id": task_id,
                         })
                         history.extend(step_results)
                         history.append({"debug": debug, "attempt": attempt})
@@ -864,6 +1084,28 @@ class AutonomousDevOpsAgent:
                         break
                 else:
                     history.extend(step_results)
+
+                    # Record the successful experience in long-term memory
+                    agent_memory.save_experience(
+                        chat_id=chat_id,
+                        task_id=task_id,
+                        agent="autonomous",
+                        request_pattern=user_request[:200],
+                        outcome="success",
+                        payload={
+                            "plan": plan,
+                            "actions": actions,
+                            "attempt": attempt,
+                        },
+                    )
+                    agent_memory.set_working(task_id, status="completed", attempt=attempt)
+                    agent_memory.inc_stat("autonomous", "successes")
+                    agent_memory.publish_event("task_completed", {
+                        "chat_id": chat_id, "task_id": task_id,
+                        "attempt": attempt,
+                        "action_count": len(actions),
+                    })
+
                     return {
                         "status": "completed",
                         "attempt": attempt,
@@ -879,8 +1121,27 @@ class AutonomousDevOpsAgent:
                     "action_type": "orchestration",
                     "server": context.get("server_config", {}),
                     "logs": [],
+                    "chat_id": chat_id,
+                    "task_id": task_id,
                 })
                 history.append({"debug": debug, "attempt": attempt})
+
+        # All attempts exhausted
+        agent_memory.save_experience(
+            chat_id=chat_id,
+            task_id=task_id,
+            agent="autonomous",
+            request_pattern=user_request[:200],
+            outcome="failure",
+            payload={"error": last_error, "history_len": len(history)},
+        )
+        agent_memory.set_working(task_id, status="failed", error=last_error[:200])
+        agent_memory.inc_stat("autonomous", "failures")
+        agent_memory.publish_event("task_failed", {
+            "chat_id": chat_id, "task_id": task_id,
+            "reason": last_error or "Autonomous execution failed",
+            "attempt": self.MAX_ATTEMPTS,
+        })
 
         return {
             "status": "failed",

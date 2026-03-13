@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from agents.orchestrator import process_message
+from agents.memory import agent_memory, KNOWN_AGENTS
 from config import supabase
 from pydantic import BaseModel
 from typing import Optional
@@ -95,3 +96,17 @@ async def get_task_status(task_id: str):
             status_code=500, 
             detail="Failed to retrieve task status"
         )
+
+@router.get("/stats")
+async def get_agent_stats():
+    """Return performance metrics for all agents from Redis."""
+    return {agent: agent_memory.get_stats(agent) for agent in KNOWN_AGENTS}
+
+
+@router.get("/memory/{task_id}")
+async def get_task_working_memory(task_id: str):
+    """Return the current working memory for a task (Redis hash)."""
+    data = agent_memory.get_working(task_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Working memory not found for task")
+    return data
