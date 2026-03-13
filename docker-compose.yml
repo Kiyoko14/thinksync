@@ -4,11 +4,19 @@ services:
     container_name: thinksync-redis
     ports:
       - "6379:6379"
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --tcp-backlog 511
+      --maxclients 1000
+      --save ""
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
+    restart: always
     volumes:
       - redis-data:/data
     environment:
@@ -25,12 +33,39 @@ services:
       - "8000:8000"
     environment:
       - SUPABASE_URL=${SUPABASE_URL}
+      # Service role key (server-side only — bypasses RLS)
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
       - SUPABASE_ACCESS_TOKEN=${SUPABASE_ACCESS_TOKEN}
       - SUPABASE_ORG_ID=${SUPABASE_ORG_ID}
-      - REDIS_URL=redis://redis:6379
+      # Direct PostgreSQL connection URL — used for migrations and direct SQL access
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - ENVIRONMENT=production
+
+      # ── Concurrency / performance tunables ────────────────────────────────
+      # Workers: number of uvicorn processes (default: 2×CPU+1, max 8)
+      - WEB_CONCURRENCY=${WEB_CONCURRENCY:-4}
+      # Uvicorn bind settings
+      - UVICORN_HOST=${UVICORN_HOST:-0.0.0.0}
+      - UVICORN_PORT=${UVICORN_PORT:-8000}
+      - UVICORN_TIMEOUT_KEEP_ALIVE=${UVICORN_TIMEOUT_KEEP_ALIVE:-30}
+      - UVICORN_LOG_LEVEL=${UVICORN_LOG_LEVEL:-info}
+      # Request wall-clock timeout in seconds (default: 60)
+      - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-60}
+      # Per-IP rate limit: requests per 60-second window (default: 120)
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-120}
+      # Max parallel OpenAI API calls (default: 20, stay within rate limits)
+      - OPENAI_CONCURRENCY=${OPENAI_CONCURRENCY:-20}
+      # Max parallel SSH connections (default: 50)
+      - SSH_CONCURRENCY=${SSH_CONCURRENCY:-50}
+      # Max parallel Supabase/DB calls in thread pool (default: 30)
+      - DB_CONCURRENCY=${DB_CONCURRENCY:-30}
+      # Redis connection pool size (default: 50)
+      - REDIS_MAX_CONNECTIONS=${REDIS_MAX_CONNECTIONS:-50}
+    restart: always
     depends_on:
       redis:
         condition: service_healthy
@@ -38,11 +73,20 @@ services:
       - ./backend:/app
     networks:
       - thinksync-network
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2g
+        reservations:
+          cpus: "0.5"
+          memory: 512m
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
+      start_period: 15s
 
   frontend:
     build:
@@ -54,7 +98,8 @@ services:
     environment:
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
-      - NEXT_PUBLIC_API_URL=http://backend:8000
+      # Production API URL — frontend calls this from the browser
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://api.thinksync.art}
     depends_on:
       - backend
     volumes:

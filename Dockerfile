@@ -21,5 +21,8 @@ COPY backend/ .
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)" || exit 1
 
-# Run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application via the env-configurable startup script.
+# All tunables (workers, host, port, timeouts, concurrency limits) can be
+# overridden by environment variables — no image rebuild needed.
+# See backend/start.py for the full list of supported env vars.
+CMD ["python", "start.py"]

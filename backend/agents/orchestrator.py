@@ -1,9 +1,15 @@
 from agents.agents import PlannerAgent, ActionAgent, BuilderAgent, DebuggerAgent, AuditorAgent, AutonomousDevOpsAgent
+from agents.memory import agent_memory
 from config import redis_client, supabase
 from services.execution import execute_action
 import json
 
 STATES = ["CREATED", "PLANNED", "ACTION_GENERATED", "BUILDING", "EXECUTING", "DEBUGGING", "AUDITING", "COMPLETED", "FAILED"]
+
+# Redis TTL for task state (24 hours — keeps active tasks available but avoids
+# unbounded memory growth on Upstash / managed Redis instances).
+TASK_TTL_SECONDS = 86400
+
 
 class Orchestrator:
     def __init__(self):
@@ -17,8 +23,11 @@ class Orchestrator:
     async def process_message(self, chat_id: str, message: str):
         if not supabase:
             return {"error": "Database not configured"}
-        
-        # Create task
+
+        # ── Store user message in short-term conversation memory ───────────
+        agent_memory.remember_message(chat_id, "user", message)
+
+        # Create task record in Supabase
         task_data = {
             "chat_id": chat_id,
             "state": "CREATED",
@@ -28,34 +37,63 @@ class Orchestrator:
         try:
             task_response = supabase.table("tasks").insert(task_data).execute()
             task_id = task_response.data[0]["id"]
-            
-            # Store in Redis if available
+
+            # Mirror task state into Redis for fast lookups (with TTL)
             if redis_client:
                 try:
-                    redis_client.set(f"task:{task_id}", json.dumps(task_data))
+                    redis_client.setex(f"task:{task_id}", TASK_TTL_SECONDS, json.dumps(task_data))
                 except Exception as e:
                     print(f"Warning: Failed to store task in Redis: {e}")
-            
+
+            # Initialise working memory for this task
+            agent_memory.set_working(task_id,
+                chat_id=chat_id,
+                state="CREATED",
+                step="planning",
+                user_message=message[:200],
+            )
+
             # Process through states
-            await self.run_task(task_id, message)
+            await self.run_task(task_id, chat_id, message)
             return {"task_id": task_id, "status": "initiated"}
         except Exception as e:
             print(f"Error creating task: {e}")
             return {"error": str(e)}
 
-    async def run_task(self, task_id: str, message: str):
+    async def run_task(self, task_id: str, chat_id: str, message: str):
         """Run task with proper error handling"""
         task = {"state": "CREATED"}
 
         def _persist_task_state(current_task: dict) -> None:
+            """Write task state to Redis (TTL-bounded), Supabase, and working memory."""
             if redis_client:
-                redis_client.set(f"task:{task_id}", json.dumps(current_task))
+                try:
+                    redis_client.setex(f"task:{task_id}", TASK_TTL_SECONDS, json.dumps(current_task))
+                except Exception as e:
+                    print(f"Warning: Redis task persist failed: {e}")
+            if supabase:
+                try:
+                    supabase.table("tasks").update({
+                        "state": current_task.get("state", "FAILED"),
+                        "step": current_task.get("step", ""),
+                    }).eq("id", task_id).execute()
+                except Exception as e:
+                    print(f"Warning: Supabase task update failed: {e}")
+            # Mirror into working memory for fast agent reads
+            agent_memory.set_working(task_id,
+                state=current_task.get("state", "FAILED"),
+                step=current_task.get("step", ""),
+            )
 
         try:
+            # Prefer Redis for fast state read; fall back to default
             if redis_client:
-                task_data = redis_client.get(f"task:{task_id}")
-                if task_data:
-                    task = json.loads(task_data)
+                try:
+                    task_data = redis_client.get(f"task:{task_id}")
+                    if task_data:
+                        task = json.loads(task_data)
+                except Exception as e:
+                    print(f"Warning: Redis task read failed: {e}")
 
             task["state"] = "PLANNED"
             _persist_task_state(task)
@@ -65,6 +103,7 @@ class Orchestrator:
                 {
                     "environment": "production",
                     "task_id": task_id,
+                    "chat_id": chat_id,
                 },
             )
 
@@ -79,6 +118,23 @@ class Orchestrator:
             task["autonomous_result"] = auto_result
             _persist_task_state(task)
 
+            # Store the assistant reply in conversation memory
+            if status == "completed":
+                summary = f"Task completed. Executed {len(auto_result.get('actions', []))} actions."
+            else:
+                summary = f"Task {status}. {auto_result.get('error', '')[:120]}"
+            agent_memory.remember_message(chat_id, "assistant", summary)
+
+            # Persist completed task history to Supabase for analytics
+            if status == "completed" and supabase:
+                try:
+                    supabase.table("tasks").update({
+                        "state": "COMPLETED",
+                        "result": auto_result,
+                    }).eq("id", task_id).execute()
+                except Exception as e:
+                    print(f"Warning: Supabase task completion update failed: {e}")
+
             # Keep compatibility with external executor for server-bound commands.
             if status == "completed":
                 actions = auto_result.get("actions", [])
@@ -92,13 +148,12 @@ class Orchestrator:
                             break
         except Exception as e:
             print(f"Error in task processing: {e}")
-            if redis_client:
-                try:
-                    task["state"] = "FAILED"
-                    task["error"] = str(e)
-                    redis_client.set(f"task:{task_id}", json.dumps(task))
-                except:
-                    pass
+            try:
+                task["state"] = "FAILED"
+                task["error"] = str(e)
+                _persist_task_state(task)
+            except Exception:
+                pass
 
 orchestrator = Orchestrator()
 
