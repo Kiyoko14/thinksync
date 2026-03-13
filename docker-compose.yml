@@ -42,8 +42,27 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - ENVIRONMENT=production
-      # Number of uvicorn worker processes (1 per CPU core recommended)
+
+      # ── Concurrency / performance tunables ────────────────────────────────
+      # Workers: number of uvicorn processes (default: 2×CPU+1, max 8)
       - WEB_CONCURRENCY=${WEB_CONCURRENCY:-4}
+      # Uvicorn bind settings
+      - UVICORN_HOST=${UVICORN_HOST:-0.0.0.0}
+      - UVICORN_PORT=${UVICORN_PORT:-8000}
+      - UVICORN_TIMEOUT_KEEP_ALIVE=${UVICORN_TIMEOUT_KEEP_ALIVE:-30}
+      - UVICORN_LOG_LEVEL=${UVICORN_LOG_LEVEL:-info}
+      # Request wall-clock timeout in seconds (default: 60)
+      - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-60}
+      # Per-IP rate limit: requests per 60-second window (default: 120)
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-120}
+      # Max parallel OpenAI API calls (default: 20, stay within rate limits)
+      - OPENAI_CONCURRENCY=${OPENAI_CONCURRENCY:-20}
+      # Max parallel SSH connections (default: 50)
+      - SSH_CONCURRENCY=${SSH_CONCURRENCY:-50}
+      # Max parallel Supabase/DB calls in thread pool (default: 30)
+      - DB_CONCURRENCY=${DB_CONCURRENCY:-30}
+      # Redis connection pool size (default: 50)
+      - REDIS_MAX_CONNECTIONS=${REDIS_MAX_CONNECTIONS:-50}
     restart: always
     depends_on:
       redis:

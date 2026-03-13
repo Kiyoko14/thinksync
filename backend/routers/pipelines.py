@@ -14,6 +14,8 @@ GET    /pipelines/{id}/runs         — list recent runs (Supabase)
 """
 
 import asyncio
+import re
+import shlex
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
@@ -23,6 +25,9 @@ from routers.auth import get_current_user
 from services.pipeline import pipeline_engine, RunStatus
 
 router = APIRouter(prefix="/pipelines", tags=["pipelines"])
+
+# Compiled once at import time — used to validate env var names before shell injection
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -214,9 +219,6 @@ async def trigger_run(
     # Prepend env-var export commands to the first stage if any vars defined.
     # Validate key names and use shlex.quote on values to prevent command injection.
     if merged_env:
-        import re
-        import shlex
-        _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
         invalid = [k for k in merged_env if not _ENV_NAME_RE.match(k)]
         if invalid:
             raise HTTPException(

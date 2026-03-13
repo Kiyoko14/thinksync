@@ -1,4 +1,4 @@
-from config import redis_client, supabase
+from config import redis_client, supabase, SSH_CONCURRENCY
 import asyncio
 from typing import Dict, Any
 import asyncssh
@@ -6,7 +6,8 @@ import asyncssh
 # ── Concurrency limits ────────────────────────────────────────────────────────
 # Each SSH connection consumes file descriptors and memory on both sides.
 # Cap concurrent SSH sessions to prevent resource exhaustion under load.
-_SSH_SEMAPHORE = asyncio.Semaphore(50)
+# Controlled via the SSH_CONCURRENCY environment variable (default: 50).
+_SSH_SEMAPHORE = asyncio.Semaphore(SSH_CONCURRENCY)
 
 class ExecutionSandbox:
     def __init__(self):

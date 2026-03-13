@@ -21,8 +21,8 @@ COPY backend/ .
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)" || exit 1
 
-# Run the application with multiple workers to handle concurrent requests.
-# WEB_CONCURRENCY defaults to 4 (good for ~1 000 concurrent users).
-# --timeout-keep-alive keeps idle HTTP/1.1 connections alive for 30 s
-# so clients don't incur a full TCP handshake on every request.
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WEB_CONCURRENCY:-4} --timeout-keep-alive 30 --access-log"]
+# Run the application via the env-configurable startup script.
+# All tunables (workers, host, port, timeouts, concurrency limits) can be
+# overridden by environment variables — no image rebuild needed.
+# See backend/start.py for the full list of supported env vars.
+CMD ["python", "start.py"]

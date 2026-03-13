@@ -1,9 +1,9 @@
 import os
 import asyncio
+from typing import Any, Callable, Optional, TypeVar
 from supabase import create_client, Client
 from dotenv import load_dotenv
 import redis
-from typing import Optional
 from openai import OpenAI
 from pathlib import Path
 
@@ -11,6 +11,12 @@ from pathlib import Path
 ENV_FILE = Path(__file__).resolve().parent / ".env"
 if ENV_FILE.exists():
     load_dotenv(dotenv_path=ENV_FILE, override=False)
+
+
+# ── Helper: parse int env var ─────────────────────────────────────────────────
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    return int(raw) if raw.isdigit() else default
 
 # Supabase
 # The backend uses the service role key so it can bypass Row Level Security
@@ -49,7 +55,7 @@ if redis_url:
         redis_client = redis.from_url(
             redis_url,
             decode_responses=True,
-            max_connections=50,       # connection pool — handle 1 000 concurrent users
+            max_connections=_int_env("REDIS_MAX_CONNECTIONS", 50),
             socket_connect_timeout=3, # fail fast if Redis is unreachable
             socket_timeout=3,
             retry_on_timeout=True,
@@ -78,13 +84,27 @@ if openai_key:
         openai_client = None
 else:
     print("⚠ OpenAI API key not found in environment variables")
+
+# ── Concurrency tunables (all overridable via environment variables) ──────────
+#
+#   OPENAI_CONCURRENCY   — max parallel OpenAI requests (default: 20)
+#   SSH_CONCURRENCY      — max parallel SSH connections  (default: 50)
+#   DB_CONCURRENCY       — max parallel Supabase/DB calls in thread pool (default: 30)
+#
+# These values are also read by services/execution.py and used in main.py.
+
+OPENAI_CONCURRENCY: int = _int_env("OPENAI_CONCURRENCY", 20)
+SSH_CONCURRENCY: int = _int_env("SSH_CONCURRENCY", 50)
+DB_CONCURRENCY: int = _int_env("DB_CONCURRENCY", 30)
+
 # ── Async OpenAI helper ───────────────────────────────────────────────────────
 # The standard `openai` SDK uses a synchronous HTTP client which blocks the
 # asyncio event loop.  `call_openai` wraps each call in asyncio.to_thread so
 # it runs in the thread pool and frees the event loop for other coroutines.
-# A semaphore caps concurrent OpenAI requests at 20 to stay within rate limits.
+# A semaphore (size = OPENAI_CONCURRENCY) caps concurrent OpenAI requests to
+# stay within OpenAI rate limits and avoid saturating the thread pool.
 
-_OPENAI_SEMAPHORE = asyncio.Semaphore(20)
+_OPENAI_SEMAPHORE = asyncio.Semaphore(OPENAI_CONCURRENCY)
 
 
 async def call_openai(**kwargs):
@@ -103,3 +123,41 @@ async def call_openai(**kwargs):
             openai_client.chat.completions.create,
             **kwargs,
         )
+
+
+# ── Async Supabase helper ─────────────────────────────────────────────────────
+# The Supabase Python SDK is synchronous.  Calling `.execute()` on the main
+# asyncio event loop blocks it for the full round-trip (~10-100 ms), which
+# prevents other coroutines from running and severely limits throughput.
+#
+# `async_db` offloads any synchronous Supabase call to the default thread pool
+# (asyncio.to_thread) and gates concurrent calls with a semaphore so the pool
+# is never saturated.  DB_CONCURRENCY (default 30) is a safe value for Supabase's
+# connection pool limits on free/pro tiers.
+#
+# Usage:
+#     data = await async_db(
+#         lambda: supabase.table("servers").select("*").eq("id", sid).execute()
+#     )
+
+_DB_SEMAPHORE = asyncio.Semaphore(DB_CONCURRENCY)
+
+_T = TypeVar("_T")
+
+
+async def async_db(fn: Callable[[], _T]) -> _T:
+    """
+    Run a synchronous Supabase (or other blocking DB) call off the event loop.
+
+    The call is wrapped in a lambda at the call site so arguments are captured
+    by closure, e.g.:
+
+        result = await async_db(
+            lambda: supabase.table("tasks")
+                        .select("*")
+                        .eq("user_id", uid)
+                        .execute()
+        )
+    """
+    async with _DB_SEMAPHORE:
+        return await asyncio.to_thread(fn)

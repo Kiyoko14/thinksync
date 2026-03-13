@@ -5,7 +5,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from config import supabase, openai_client, call_openai
+from config import supabase, openai_client, call_openai, async_db
 from models import Chat, Message
 from routers.auth import get_current_user
 from routers.servers import LOCAL_SERVERS
@@ -44,8 +44,8 @@ def _now() -> str:
 
 async def _validate_server_access(server_id: str, current_user: dict) -> None:
     if supabase:
-        response = (
-            supabase.table("servers")
+        response = await async_db(
+            lambda: supabase.table("servers")
             .select("id")
             .eq("id", server_id)
             .eq("user_id", current_user["id"])
@@ -66,10 +66,12 @@ async def get_chats(
     current_user: dict = Depends(get_current_user),
 ):
     if supabase:
-        query = supabase.table("chats").select("*").eq("user_id", current_user["id"])
-        if server_id:
-            query = query.eq("server_id", server_id)
-        response = query.order("created_at", desc=True).execute()
+        def _query():
+            q = supabase.table("chats").select("*").eq("user_id", current_user["id"])
+            if server_id:
+                q = q.eq("server_id", server_id)
+            return q.order("created_at", desc=True).execute()
+        response = await async_db(_query)
         return response.data
 
     result = [
@@ -83,8 +85,8 @@ async def get_chats(
 @router.get("/{chat_id}", response_model=Chat)
 async def get_chat(chat_id: str, current_user: dict = Depends(get_current_user)):
     if supabase:
-        response = (
-            supabase.table("chats")
+        response = await async_db(
+            lambda: supabase.table("chats")
             .select("*")
             .eq("id", chat_id)
             .eq("user_id", current_user["id"])
@@ -116,7 +118,9 @@ async def create_chat(request: CreateChatRequest, current_user: dict = Depends(g
 
     if supabase:
         payload = {k: v for k, v in chat_data.items() if k != "id"}
-        response = supabase.table("chats").insert(payload).execute()
+        response = await async_db(
+            lambda: supabase.table("chats").insert(payload).execute()
+        )
         created_chat = response.data[0]
         get_chat_context(created_chat["id"], created_chat["server_id"])
         return created_chat
@@ -132,8 +136,8 @@ async def get_messages(chat_id: str, current_user: dict = Depends(get_current_us
     await get_chat(chat_id, current_user)
 
     if supabase:
-        response = (
-            supabase.table("messages")
+        response = await async_db(
+            lambda: supabase.table("messages")
             .select("*")
             .eq("chat_id", chat_id)
             .order("created_at")
@@ -239,7 +243,9 @@ async def send_message(
     )
 
     if supabase:
-        supabase.table("messages").insert([user_message, assistant_message]).execute()
+        await async_db(
+            lambda: supabase.table("messages").insert([user_message, assistant_message]).execute()
+        )
     else:
         LOCAL_MESSAGES.setdefault(chat_id, []).extend([user_message, assistant_message])
 

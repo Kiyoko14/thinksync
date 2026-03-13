@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from config import supabase, openai_client, openai_model, call_openai
+from config import supabase, openai_client, openai_model, call_openai, async_db
 from models import Server
 from routers.auth import get_current_user
 from services.execution import ExecutionSandbox
@@ -70,7 +70,9 @@ def _legacy_server_payload(server_data: Dict[str, Any]) -> Dict[str, Any]:
 @router.get("/", response_model=List[Server])
 async def get_servers(current_user: dict = Depends(get_current_user)):
     if supabase:
-        response = supabase.table("servers").select("*").eq("user_id", current_user["id"]).execute()
+        response = await async_db(
+            lambda: supabase.table("servers").select("*").eq("user_id", current_user["id"]).execute()
+        )
         return response.data
 
     return [
@@ -83,8 +85,8 @@ async def get_servers(current_user: dict = Depends(get_current_user)):
 @router.get("/{server_id}", response_model=Server)
 async def get_server(server_id: str, current_user: dict = Depends(get_current_user)):
     if supabase:
-        response = (
-            supabase.table("servers")
+        response = await async_db(
+            lambda: supabase.table("servers")
             .select("*")
             .eq("id", server_id)
             .eq("user_id", current_user["id"])
@@ -106,11 +108,15 @@ async def create_server(request: CreateServerRequest, current_user: dict = Depen
     if supabase:
         payload = {k: v for k, v in server_data.items() if k != "id"}
         try:
-            response = supabase.table("servers").insert(payload).execute()
+            response = await async_db(
+                lambda: supabase.table("servers").insert(payload).execute()
+            )
             return response.data[0]
         except Exception:
             # Retry for legacy schema that doesn't have ssh_auth_method/ssh_password.
-            response = supabase.table("servers").insert(_legacy_server_payload(server_data)).execute()
+            response = await async_db(
+                lambda: supabase.table("servers").insert(_legacy_server_payload(server_data)).execute()
+            )
             return response.data[0]
 
     LOCAL_SERVERS[server_data["id"]] = server_data
@@ -131,16 +137,16 @@ async def update_server(server_id: str, request: CreateServerRequest, current_us
 
     if supabase:
         try:
-            response = (
-                supabase.table("servers")
+            response = await async_db(
+                lambda: supabase.table("servers")
                 .update(server_data)
                 .eq("id", server_id)
                 .eq("user_id", current_user["id"])
                 .execute()
             )
         except Exception:
-            response = (
-                supabase.table("servers")
+            response = await async_db(
+                lambda: supabase.table("servers")
                 .update(_legacy_server_payload(server_data))
                 .eq("id", server_id)
                 .eq("user_id", current_user["id"])
@@ -159,8 +165,12 @@ async def update_server(server_id: str, request: CreateServerRequest, current_us
 @router.delete("/{server_id}")
 async def delete_server(server_id: str, current_user: dict = Depends(get_current_user)):
     if supabase:
-        supabase.table("chats").delete().eq("server_id", server_id).execute()
-        supabase.table("servers").delete().eq("id", server_id).eq("user_id", current_user["id"]).execute()
+        await async_db(
+            lambda: supabase.table("chats").delete().eq("server_id", server_id).execute()
+        )
+        await async_db(
+            lambda: supabase.table("servers").delete().eq("id", server_id).eq("user_id", current_user["id"]).execute()
+        )
     else:
         local_server = LOCAL_SERVERS.get(server_id)
         if not local_server or local_server["user_id"] != current_user["id"]:
@@ -172,8 +182,8 @@ async def delete_server(server_id: str, current_user: dict = Depends(get_current
 async def deploy_code(server_id: str, request: DeploymentRequest, current_user: dict = Depends(get_current_user)):
     """Deploy code to a server using AI assistance"""
     if supabase:
-        server_response = (
-            supabase.table("servers")
+        server_response = await async_db(
+            lambda: supabase.table("servers")
             .select("*")
             .eq("id", server_id)
             .eq("user_id", current_user["id"])
@@ -229,7 +239,9 @@ Provide only the deployment script/commands."""
     
     if supabase:
         try:
-            result = supabase.table("deployments").insert(deployment_data).execute()
+            result = await async_db(
+                lambda: supabase.table("deployments").insert(deployment_data).execute()
+            )
             return {
                 "deployment_id": result.data[0]["id"],
                 "status": "pending",
@@ -249,8 +261,8 @@ Provide only the deployment script/commands."""
 async def execute_command(server_id: str, request: ExecuteCommandRequest, current_user: dict = Depends(get_current_user)):
     """Execute a command on a server"""
     if supabase:
-        server_response = (
-            supabase.table("servers")
+        server_response = await async_db(
+            lambda: supabase.table("servers")
             .select("*")
             .eq("id", server_id)
             .eq("user_id", current_user["id"])
@@ -301,8 +313,8 @@ async def get_server_status(server_id: str, current_user: dict = Depends(get_cur
     """Get server status"""
 
     if supabase:
-        server_response = (
-            supabase.table("servers")
+        server_response = await async_db(
+            lambda: supabase.table("servers")
             .select("*")
             .eq("id", server_id)
             .eq("user_id", current_user["id"])
@@ -335,7 +347,7 @@ async def get_server_status(server_id: str, current_user: dict = Depends(get_cur
             }
         )
         return {"status": "online", "server": server}
-    except:
+    except Exception:
         return {"status": "offline", "server": server}
 
 
@@ -343,8 +355,8 @@ async def get_server_status(server_id: str, current_user: dict = Depends(get_cur
 async def get_filesystem_state(server_id: str, current_user: dict = Depends(get_current_user)):
 
     if supabase:
-        server_response = (
-            supabase.table("servers")
+        server_response = await async_db(
+            lambda: supabase.table("servers")
             .select("id")
             .eq("id", server_id)
             .eq("user_id", current_user["id"])

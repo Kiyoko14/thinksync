@@ -9,7 +9,12 @@ from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from config import supabase, redis_client, openai_client
+from config import supabase, redis_client, openai_client, _int_env
+
+
+# ── Runtime tunables (configurable via environment variables) ─────────────────
+_REQUEST_TIMEOUT: int = _int_env("REQUEST_TIMEOUT", 60)
+_RATE_LIMIT_PER_MINUTE: int = _int_env("RATE_LIMIT_PER_MINUTE", 120)
 
 
 # ── Request timeout middleware ────────────────────────────────────────────────
@@ -83,11 +88,13 @@ app.add_middleware(
 app.add_middleware(GZipMiddleware, minimum_size=1_000)
 
 # Request timeout — cancel slow requests before they exhaust worker capacity
-app.add_middleware(TimeoutMiddleware, timeout_seconds=60)
+# Controlled via REQUEST_TIMEOUT env var (default: 60 s)
+app.add_middleware(TimeoutMiddleware, timeout_seconds=_REQUEST_TIMEOUT)
 
-# Rate limiter — per-IP sliding window via Redis
+# Rate limiter — per-IP fixed-window via Redis
+# Controlled via RATE_LIMIT_PER_MINUTE env var (default: 120)
 from services.limiter import RateLimitMiddleware
-app.add_middleware(RateLimitMiddleware, requests_per_minute=120)
+app.add_middleware(RateLimitMiddleware, requests_per_minute=_RATE_LIMIT_PER_MINUTE)
 
 @app.get("/")
 async def root():

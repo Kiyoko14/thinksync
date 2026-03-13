@@ -36,7 +36,7 @@ _USER_LIMIT_MULTIPLIER = 0.5   # users get 50% of the per-IP limit on expensive 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
-    Sliding-window rate limiter backed by Redis.
+    Fixed-window rate limiter backed by Redis.
 
     Parameters
     ----------

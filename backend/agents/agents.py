@@ -720,7 +720,11 @@ Always respond with a valid JSON object containing:
                 max_tokens=1500
             )
 
-            debug_text = (response.choices[0].message.content if response else "").strip()
+            debug_text = (
+                response.choices[0].message.content
+                if response and response.choices
+                else ""
+            ).strip()
 
             # Clean JSON response
             if debug_text.startswith("```json"):

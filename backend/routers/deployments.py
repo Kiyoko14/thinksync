@@ -12,7 +12,7 @@ This router adds:
 """
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from config import supabase, redis_client
+from config import supabase, redis_client, async_db
 from routers.auth import get_current_user
 from services.pipeline import pipeline_engine, RunStatus
 import json
@@ -31,7 +31,9 @@ def _dep_run_key(deployment_id: str) -> str:
 async def get_deployments(current_user: dict = Depends(get_current_user)):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not configured")
-    response = supabase.table("deployments").select("*").eq("user_id", current_user["id"]).order("created_at", desc=True).execute()
+    response = await async_db(
+        lambda: supabase.table("deployments").select("*").eq("user_id", current_user["id"]).order("created_at", desc=True).execute()
+    )
     return response.data
 
 
@@ -39,7 +41,9 @@ async def get_deployments(current_user: dict = Depends(get_current_user)):
 async def get_deployment(deployment_id: str, current_user: dict = Depends(get_current_user)):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not configured")
-    response = supabase.table("deployments").select("*").eq("id", deployment_id).eq("user_id", current_user["id"]).execute()
+    response = await async_db(
+        lambda: supabase.table("deployments").select("*").eq("id", deployment_id).eq("user_id", current_user["id"]).execute()
+    )
     if not response.data:
         raise HTTPException(status_code=404, detail="Deployment not found")
     return response.data[0]
@@ -59,8 +63,8 @@ async def execute_deployment(
         raise HTTPException(status_code=500, detail="Database not configured")
 
     # Load deployment
-    dep_resp = (
-        supabase.table("deployments")
+    dep_resp = await async_db(
+        lambda: supabase.table("deployments")
         .select("*")
         .eq("id", deployment_id)
         .eq("user_id", current_user["id"])
@@ -74,8 +78,8 @@ async def execute_deployment(
         raise HTTPException(status_code=409, detail="Deployment is already running")
 
     # Load server
-    srv_resp = (
-        supabase.table("servers")
+    srv_resp = await async_db(
+        lambda: supabase.table("servers")
         .select("*")
         .eq("id", dep["server_id"])
         .eq("user_id", current_user["id"])
@@ -123,12 +127,14 @@ async def execute_deployment(
         except Exception:
             pass
 
-    # Mark deployment as running in Supabase
+    # Mark deployment as running in Supabase (non-blocking)
     try:
-        supabase.table("deployments").update({
-            "status": "running",
-            "run_id": run_id,
-        }).eq("id", deployment_id).execute()
+        await async_db(
+            lambda: supabase.table("deployments").update({
+                "status": "running",
+                "run_id": run_id,
+            }).eq("id", deployment_id).execute()
+        )
     except Exception as e:
         print(f"deployments.execute: supabase update warning: {e}")
 
@@ -147,9 +153,11 @@ async def _run_and_update(run_id: str, deployment_id: str) -> None:
     result = await pipeline_engine.execute_run(run_id)
     if supabase:
         try:
-            supabase.table("deployments").update({
-                "status": result.get("status", "failed"),
-            }).eq("id", deployment_id).execute()
+            await async_db(
+                lambda: supabase.table("deployments").update({
+                    "status": result.get("status", "failed"),
+                }).eq("id", deployment_id).execute()
+            )
         except Exception as e:
             print(f"deployments._run_and_update supabase update warning: {e}")
 
@@ -167,8 +175,8 @@ async def get_deployment_status(
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not configured")
 
-    dep_resp = (
-        supabase.table("deployments")
+    dep_resp = await async_db(
+        lambda: supabase.table("deployments")
         .select("id,status,run_id")
         .eq("id", deployment_id)
         .eq("user_id", current_user["id"])

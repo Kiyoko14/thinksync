@@ -88,8 +88,9 @@ async def login(request: LoginRequest):
     """Password-based login with local fallback session support."""
     if supabase:
         try:
-            response = supabase.auth.sign_in_with_password(
-                {"email": request.email, "password": request.password}
+            response = await asyncio.to_thread(
+                supabase.auth.sign_in_with_password,
+                {"email": request.email, "password": request.password},
             )
             session = getattr(response, "session", None)
             user = getattr(response, "user", None)
@@ -135,9 +136,24 @@ async def get_session(authorization: Optional[str] = Header(default=None)):
     if not supabase or not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
+    # Check Redis cache before hitting Supabase
+    cache_key = _auth_cache_key(token)
+    if redis_client:
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                user_dict = json.loads(cached)
+                return SessionResponse(
+                    user_id=user_dict["id"],
+                    email=user_dict["email"],
+                    created_at=user_dict["created_at"],
+                )
+        except Exception:
+            pass
+
     try:
-        # Validate the client-supplied JWT against Supabase
-        user_response = supabase.auth.get_user(token)
+        # Validate the client-supplied JWT against Supabase (non-blocking)
+        user_response = await asyncio.to_thread(supabase.auth.get_user, token)
         if not user_response or not user_response.user:
             raise HTTPException(
                 status_code=401,
@@ -145,10 +161,22 @@ async def get_session(authorization: Optional[str] = Header(default=None)):
             )
 
         user = user_response.user
+        user_dict = {
+            "id": str(user.id),
+            "email": user.email or "",
+            "created_at": str(user.created_at),
+        }
+        # Cache in Redis for future requests
+        if redis_client:
+            try:
+                redis_client.setex(cache_key, _AUTH_CACHE_TTL, json.dumps(user_dict))
+            except Exception:
+                pass
+
         return SessionResponse(
-            user_id=str(user.id),
-            email=user.email or "",
-            created_at=str(user.created_at)
+            user_id=user_dict["id"],
+            email=user_dict["email"],
+            created_at=user_dict["created_at"],
         )
     except HTTPException:
         raise
