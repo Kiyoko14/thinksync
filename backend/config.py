@@ -27,6 +27,11 @@ supabase_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY
 if not os.getenv("SUPABASE_SERVICE_KEY") and os.getenv("SUPABASE_ANON_KEY"):
     print("⚠ SUPABASE_SERVICE_KEY not set — falling back to SUPABASE_ANON_KEY (RLS is active)")
 
+# Direct PostgreSQL connection URL (for migrations, direct SQL, and ORM access).
+# Format: postgresql://postgres:[PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres
+# Set DATABASE_URL in the environment when running Alembic, Prisma, or similar tools.
+database_url = os.getenv("DATABASE_URL")
+
 supabase: Optional[Client] = None
 if supabase_url and supabase_key:
     try:

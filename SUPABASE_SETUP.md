@@ -133,6 +133,87 @@ CREATE TABLE IF NOT EXISTS actions (
     result TEXT,
     created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Server secrets / environment variables table
+CREATE TABLE IF NOT EXISTS server_secrets (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    server_id UUID NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    name VARCHAR(120) NOT NULL,
+    value TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(server_id, name)
+);
+
+-- Pipelines table
+CREATE TABLE IF NOT EXISTS pipelines (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    server_id UUID REFERENCES servers(id) ON DELETE SET NULL,
+    name VARCHAR(120) NOT NULL,
+    description TEXT DEFAULT '',
+    stages JSONB NOT NULL DEFAULT '[]',
+    stage_count INT DEFAULT 0,
+    environment_variables JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Pipeline runs table
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    pipeline_id UUID REFERENCES pipelines(id) ON DELETE CASCADE,
+    pipeline_name VARCHAR(120),
+    user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+    chat_id UUID REFERENCES chats(id) ON DELETE SET NULL,
+    triggered_by VARCHAR(50) DEFAULT 'manual',
+    status VARCHAR(50) DEFAULT 'pending',
+    stage_count INT DEFAULT 0,
+    stage_results JSONB DEFAULT '[]',
+    duration_seconds FLOAT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Server monitoring alerts table
+CREATE TABLE IF NOT EXISTS server_alerts (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    server_id UUID NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    metric VARCHAR(50) NOT NULL,
+    value FLOAT NOT NULL,
+    threshold FLOAT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Server logs table (durable log storage, complements Redis ring buffer)
+CREATE TABLE IF NOT EXISTS server_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    server_id UUID NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    line TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Agent logs table (audit trail for agent decisions)
+CREATE TABLE IF NOT EXISTS agent_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    agent VARCHAR(100) NOT NULL,
+    input_hash VARCHAR(64),
+    result JSONB,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Agent experiences table (long-term memory for AI agents)
+CREATE TABLE IF NOT EXISTS agent_experiences (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    chat_id UUID REFERENCES chats(id) ON DELETE SET NULL,
+    task_id VARCHAR(255),
+    agent VARCHAR(100) NOT NULL,
+    request_pattern TEXT,
+    outcome VARCHAR(20) NOT NULL, -- 'success' | 'failure' | 'partial'
+    payload JSONB DEFAULT '{}',
+    created_at TIMESTAMP DEFAULT NOW()
+);
 ```
 
 ### Step 3: Create Indexes (for performance)
@@ -146,6 +227,15 @@ CREATE INDEX idx_messages_chat_id ON messages(chat_id);
 CREATE INDEX idx_deployments_user_id ON deployments(user_id);
 CREATE INDEX idx_tasks_chat_id ON tasks(chat_id);
 CREATE INDEX idx_databases_user_id ON databases(user_id);
+CREATE INDEX idx_server_secrets_server_id ON server_secrets(server_id);
+CREATE INDEX idx_server_secrets_user_id ON server_secrets(user_id);
+CREATE INDEX idx_pipelines_user_id ON pipelines(user_id);
+CREATE INDEX idx_pipeline_runs_pipeline_id ON pipeline_runs(pipeline_id);
+CREATE INDEX idx_pipeline_runs_user_id ON pipeline_runs(user_id);
+CREATE INDEX idx_server_alerts_server_id ON server_alerts(server_id);
+CREATE INDEX idx_server_logs_server_id ON server_logs(server_id);
+CREATE INDEX idx_agent_experiences_agent ON agent_experiences(agent);
+CREATE INDEX idx_agent_experiences_chat_id ON agent_experiences(chat_id);
 ```
 
 ## 4. Enable Row-Level Security
@@ -161,6 +251,11 @@ ALTER TABLE deployments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE databases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE actions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE server_secrets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pipelines ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pipeline_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE server_alerts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE server_logs ENABLE ROW LEVEL SECURITY;
 
 -- Servers: Users can only see/modify their own
 CREATE POLICY "Users can select their own servers"
@@ -237,8 +332,14 @@ Add to `.env.local`:
 ```bash
 SUPABASE_URL=https://your-project-id.supabase.co
 SUPABASE_ANON_KEY=your-anon-key
+# Service role key — used server-side to bypass Row Level Security
+SUPABASE_SERVICE_KEY=your-service-role-key
 SUPABASE_ACCESS_TOKEN=your-access-token
 SUPABASE_ORG_ID=your-org-id
+
+# Direct PostgreSQL connection URL (for migrations and direct SQL access)
+# Find in: Supabase Dashboard → Project Settings → Database → Connection String
+DATABASE_URL=postgresql://postgres:your-db-password@db.your-project-ref.supabase.co:5432/postgres
 
 # Frontend
 NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
