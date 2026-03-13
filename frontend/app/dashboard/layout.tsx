@@ -4,13 +4,18 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useState } from "react";
 import {
+  Activity,
   Bell,
+  Bot,
   ChevronRight,
   Database,
+  GitBranch,
+  KeyRound,
   LayoutDashboard,
   LogOut,
   Menu,
   Rocket,
+  ScrollText,
   Server,
   Settings,
   X,
@@ -28,6 +33,11 @@ const menuItems: MenuItem[] = [
   { name: "Servers", href: "/dashboard/servers", icon: Server },
   { name: "Deployments", href: "/dashboard/deployments", icon: Rocket },
   { name: "Databases", href: "/dashboard/databases", icon: Database },
+  { name: "Pipelines", href: "/dashboard/pipelines", icon: GitBranch },
+  { name: "Monitor", href: "/dashboard/monitor", icon: Activity },
+  { name: "Logs", href: "/dashboard/logs", icon: ScrollText },
+  { name: "Secrets", href: "/dashboard/secrets", icon: KeyRound },
+  { name: "Agents", href: "/dashboard/agents", icon: Bot },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 

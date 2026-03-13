@@ -70,7 +70,7 @@ export type Deployment = {
   code: string;
   language: string;
   deployment_type: string;
-  status: "pending" | "success" | "failed";
+  status: "pending" | "running" | "success" | "failed";
   created_at: string;
 };
 
@@ -79,6 +79,76 @@ export type SendMessageResponse = {
   assistant_message: Message;
   inspection?: Record<string, unknown>;
 };
+
+export interface Stage {
+  name: string;
+  commands: string[];
+  on_failure: string;
+  timeout: number;
+}
+
+export interface Pipeline {
+  id: string;
+  name: string;
+  description?: string;
+  server_id: string;
+  stages: Stage[];
+  environment_variables?: Record<string, string>;
+  created_at: string;
+}
+
+export interface StageResult {
+  name: string;
+  status: string;
+  output?: string;
+}
+
+export interface PipelineRun {
+  id: string;
+  pipeline_id: string;
+  status: string;
+  current_stage?: string;
+  duration_seconds?: number;
+  stage_results?: StageResult[];
+  created_at: string;
+}
+
+export interface ServerMetrics {
+  server_id: string;
+  cpu_percent: number;
+  mem_percent: number;
+  disk_percent: number;
+  load_1m?: number;
+  uptime_seconds?: number;
+  collected_at: string;
+}
+
+export interface Alert {
+  server_id: string;
+  metric: string;
+  value: number;
+  threshold: number;
+  ts: number;
+}
+
+export interface Secret {
+  name: string;
+  server_id: string;
+  created_at: string;
+}
+
+export interface AgentStats {
+  [agent: string]: Record<string, number>;
+}
+
+export interface Task {
+  id: string;
+  chat_id: string;
+  state: string;
+  step?: string;
+  attempts?: number;
+  created_at: string;
+}
 
 // ─── HTTP helper ──────────────────────────────────────────────────────────────
 
@@ -197,6 +267,24 @@ export const apiClient = {
     });
   },
 
+  async executeCommand(
+    serverId: string,
+    command: string,
+    timeout?: number
+  ): Promise<{ output: string; exit_code: number }> {
+    return request<{ output: string; exit_code: number }>(
+      `/servers/${serverId}/execute`,
+      {
+        method: "POST",
+        body: JSON.stringify({ command, timeout }),
+      }
+    );
+  },
+
+  async getServerStatus(serverId: string): Promise<Record<string, unknown>> {
+    return request<Record<string, unknown>>(`/servers/${serverId}/status`);
+  },
+
   // Chats
   async getChats(serverId?: string): Promise<Chat[]> {
     const query = serverId ? `?server_id=${encodeURIComponent(serverId)}` : "";
@@ -229,7 +317,7 @@ export const apiClient = {
     });
   },
 
-  // Deployments
+  // Deployments (flat - kept for backwards compat)
   async getDeployments(): Promise<Deployment[]> {
     return request<Deployment[]>("/deployments/");
   },
@@ -244,5 +332,154 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(data),
     });
+  },
+
+  // ─── Namespaced sub-clients ───────────────────────────────────────────────
+
+  agents: {
+    async getStats(): Promise<AgentStats> {
+      return request<AgentStats>("/agents/stats");
+    },
+    async getMemory(taskId: string): Promise<Record<string, unknown>> {
+      return request<Record<string, unknown>>(`/agents/memory/${taskId}`);
+    },
+    async processMessage(
+      chatId: string,
+      data: Record<string, unknown>
+    ): Promise<Record<string, unknown>> {
+      return request<Record<string, unknown>>(`/agents/process/${chatId}`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+    },
+  },
+
+  monitor: {
+    async collectMetrics(serverId: string): Promise<ServerMetrics> {
+      return request<ServerMetrics>(`/monitor/${serverId}/collect`, {
+        method: "POST",
+      });
+    },
+    async getLatest(serverId: string): Promise<ServerMetrics> {
+      return request<ServerMetrics>(`/monitor/${serverId}/latest`);
+    },
+    async getHistory(
+      serverId: string,
+      metric: string,
+      minutes: number
+    ): Promise<ServerMetrics[]> {
+      return request<ServerMetrics[]>(
+        `/monitor/${serverId}/history?metric=${encodeURIComponent(metric)}&minutes=${minutes}`
+      );
+    },
+    async getAlerts(serverId: string): Promise<Alert[]> {
+      return request<Alert[]>(`/monitor/${serverId}/alerts`);
+    },
+  },
+
+  pipelines: {
+    async list(): Promise<Pipeline[]> {
+      return request<Pipeline[]>("/pipelines/");
+    },
+    async create(
+      data: Omit<Pipeline, "id" | "created_at">
+    ): Promise<Pipeline> {
+      return request<Pipeline>("/pipelines/", {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+    },
+    async get(id: string): Promise<Pipeline> {
+      return request<Pipeline>(`/pipelines/${id}`);
+    },
+    async update(
+      id: string,
+      data: Partial<Omit<Pipeline, "id" | "created_at">>
+    ): Promise<Pipeline> {
+      return request<Pipeline>(`/pipelines/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(data),
+      });
+    },
+    async delete(id: string): Promise<void> {
+      return request<void>(`/pipelines/${id}`, { method: "DELETE" });
+    },
+    async triggerRun(
+      id: string,
+      data?: Record<string, unknown>
+    ): Promise<PipelineRun> {
+      return request<PipelineRun>(`/pipelines/${id}/run`, {
+        method: "POST",
+        body: JSON.stringify(data ?? {}),
+      });
+    },
+    async getRun(runId: string): Promise<PipelineRun> {
+      return request<PipelineRun>(`/pipelines/runs/${runId}`);
+    },
+    async cancelRun(runId: string): Promise<PipelineRun> {
+      return request<PipelineRun>(`/pipelines/runs/${runId}/cancel`, {
+        method: "POST",
+      });
+    },
+    async listRuns(pipelineId: string): Promise<PipelineRun[]> {
+      return request<PipelineRun[]>(`/pipelines/${pipelineId}/runs`);
+    },
+  },
+
+  logs: {
+    async getHistory(
+      serverId: string,
+      limit?: number
+    ): Promise<{ lines: string[] }> {
+      const q = limit !== undefined ? `?limit=${limit}` : "";
+      return request<{ lines: string[] }>(`/logs/history/${serverId}${q}`);
+    },
+  },
+
+  secrets: {
+    async list(serverId: string): Promise<Secret[]> {
+      return request<Secret[]>(`/secrets/${serverId}`);
+    },
+    async upsert(
+      serverId: string,
+      name: string,
+      value: string
+    ): Promise<Secret> {
+      return request<Secret>(`/secrets/${serverId}`, {
+        method: "POST",
+        body: JSON.stringify({ name, value }),
+      });
+    },
+    async delete(serverId: string, name: string): Promise<void> {
+      return request<void>(`/secrets/${serverId}/${encodeURIComponent(name)}`, {
+        method: "DELETE",
+      });
+    },
+  },
+
+  tasks: {
+    async list(): Promise<Task[]> {
+      return request<Task[]>("/tasks/");
+    },
+    async get(id: string): Promise<Task> {
+      return request<Task>(`/tasks/${id}`);
+    },
+  },
+
+  deployments: {
+    async list(): Promise<Deployment[]> {
+      return request<Deployment[]>("/deployments/");
+    },
+    async get(id: string): Promise<Deployment> {
+      return request<Deployment>(`/deployments/${id}`);
+    },
+    async execute(id: string): Promise<{ message?: string }> {
+      return request<{ message?: string }>(`/deployments/${id}/execute`, {
+        method: "POST",
+      });
+    },
+    async getStatus(id: string): Promise<Deployment> {
+      return request<Deployment>(`/deployments/${id}/status`);
+    },
   },
 };
