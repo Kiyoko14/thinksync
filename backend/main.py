@@ -66,9 +66,7 @@ allowed_origins = [
     "https://thinksync.art",
     # Local development origins
     "http://localhost:3000",
-    "http://localhost:5000",
     "http://127.0.0.1:3000",
-    "http://127.0.0.1:5000",
     *(
         [f"https://{_replit_domain}"]
         if _replit_domain else []
