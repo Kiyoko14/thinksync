@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from config import supabase, openai_client
+from config import supabase, openai_client, openai_model
 from models import Server
 from routers.auth import get_current_user
 from services.execution import ExecutionSandbox
@@ -191,7 +191,7 @@ async def deploy_code(server_id: str, request: DeploymentRequest, current_user: 
     if openai_client:
         try:
             response = openai_client.chat.completions.create(
-                model="gpt-4",
+                model=openai_model,
                 messages=[
                     {
                         "role": "user",
@@ -276,7 +276,7 @@ async def execute_command(server_id: str, request: ExecuteCommandRequest, curren
             {
                 "action": "run_command",
                 "command": request.command,
-                "chat_id": "direct_execution",
+                "chat_id": f"direct_{server_id}_{current_user['id']}",
                 "timeout": request.timeout,
             },
             {
@@ -323,7 +323,7 @@ async def get_server_status(server_id: str, current_user: dict = Depends(get_cur
             {
                 "action": "run_command",
                 "command": "echo 'online'",
-                "chat_id": "status_check"
+                "chat_id": f"status_{server_id}"
             },
             {
                 "host": server["host"],

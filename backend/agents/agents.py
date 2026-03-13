@@ -374,12 +374,16 @@ Always provide detailed execution logs and status updates.
 
             if action_type == 'run_command':
                 return await self._execute_command(action, server_config)
-            elif action_type == 'create_file':
+            elif action_type in ('create_file', 'write_file'):
                 return await self._create_file(action, server_config)
+            elif action_type == 'modify_file':
+                return await self._modify_file(action, server_config)
             elif action_type == 'install_package':
                 return await self._install_package(action, server_config)
             elif action_type == 'start_service':
                 return await self._start_service(action, server_config)
+            elif action_type == 'stop_service':
+                return await self._stop_service(action, server_config)
             else:
                 return {
                     "status": "error",
@@ -406,21 +410,63 @@ Always provide detailed execution logs and status updates.
             "chat_id": f"build_{action.get('id', 'unknown')}"
         }, server_config)
 
+        success = result.get("status") == "success"
         return {
-            "status": "success" if result.get("status") == "completed" else "error",
-            "message": "Command executed successfully" if result.get("status") == "completed" else "Command failed",
+            "status": "success" if success else "error",
+            "message": "Command executed successfully" if success else "Command failed",
             "output": result.get("output", ""),
-            "exit_code": result.get("exit_code", -1)
+            "exit_code": result.get("exit_status", result.get("exit_code", -1))
         }
 
     async def _create_file(self, action: Dict, server_config: Dict) -> Dict[str, Any]:
-        """Create a file on a server"""
-        # Implementation for file creation
-        return {
-            "status": "success",
-            "message": "File created successfully",
-            "output": f"Created file: {action.get('target', 'unknown')}"
-        }
+        """Create a file on a remote server via SSH.
+
+        If the action already carries a ``command`` field the AI generated
+        (e.g. a heredoc), that is used as-is.  Otherwise the file content is
+        taken from ``action["parameters"]["content"]`` and written via a
+        base64-encoded pipeline so that any special characters are handled
+        safely.
+        """
+        import base64
+        import os
+        import shlex
+
+        # Prefer an AI-generated command if present
+        if action.get("command"):
+            return await self._execute_command(action, server_config)
+
+        file_path = (
+            action.get("target")
+            or action.get("parameters", {}).get("path", "")
+        )
+        content = action.get("parameters", {}).get("content", "")
+
+        if not file_path:
+            return {
+                "status": "error",
+                "message": "File path (target or parameters.path) is required for create_file",
+                "output": "",
+            }
+
+        # Base64-encode the content to avoid any shell quoting/escaping issues
+        content_b64 = base64.b64encode(content.encode("utf-8")).decode()
+        # Safely quote the file path so special characters cannot break the command
+        quoted_path = shlex.quote(file_path)
+        dir_path = os.path.dirname(file_path)
+        mkdir_part = f"mkdir -p {shlex.quote(dir_path)} && " if dir_path else ""
+        command = f"{mkdir_part}printf '%s' '{content_b64}' | base64 -d > {quoted_path}"
+
+        result = await self._execute_command(
+            {"command": command, "id": action.get("id")},
+            server_config,
+        )
+        if result.get("status") == "success":
+            result["message"] = f"File created: {file_path}"
+        return result
+
+    async def _modify_file(self, action: Dict, server_config: Dict) -> Dict[str, Any]:
+        """Overwrite an existing file on a remote server (same as create_file)."""
+        return await self._create_file(action, server_config)
 
     async def _install_package(self, action: Dict, server_config: Dict) -> Dict[str, Any]:
         """Install a package on a server"""
@@ -451,6 +497,15 @@ Always provide detailed execution logs and status updates.
             "id": action.get("id")
         }, server_config)
 
+    async def _stop_service(self, action: Dict, server_config: Dict) -> Dict[str, Any]:
+        """Stop a service on a server"""
+        service_name = action.get("parameters", {}).get("service", "")
+        command = f"systemctl stop {service_name}"
+
+        return await self._execute_command({
+            "command": command,
+            "id": action.get("id")
+        }, server_config)
 
 class DebuggerAgent:
     """AI Agent for debugging deployment issues and errors"""
