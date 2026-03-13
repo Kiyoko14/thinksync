@@ -81,13 +81,19 @@ export default function AgentsPage() {
   const agentKeys = Object.keys(stats).length > 0 ? Object.keys(stats) : KNOWN_AGENTS;
 
   const taskStateColor = (state: string) => {
+    const normalized = state.toUpperCase();
     const map: Record<string, string> = {
-      pending: "bg-yellow-500/20 text-yellow-400 border-yellow-500/40",
-      running: "bg-blue-500/20 text-blue-400 border-blue-500/40",
-      done: "bg-green-500/20 text-green-400 border-green-500/40",
-      failed: "bg-red-500/20 text-red-400 border-red-500/40",
+      CREATED: "bg-slate-500/20 text-slate-300 border-slate-500/40",
+      PLANNED: "bg-indigo-500/20 text-indigo-300 border-indigo-500/40",
+      ACTION_GENERATED: "bg-blue-500/20 text-blue-300 border-blue-500/40",
+      BUILDING: "bg-cyan-500/20 text-cyan-300 border-cyan-500/40",
+      EXECUTING: "bg-yellow-500/20 text-yellow-400 border-yellow-500/40",
+      DEBUGGING: "bg-orange-500/20 text-orange-300 border-orange-500/40",
+      AUDITING: "bg-purple-500/20 text-purple-300 border-purple-500/40",
+      COMPLETED: "bg-green-500/20 text-green-400 border-green-500/40",
+      FAILED: "bg-red-500/20 text-red-400 border-red-500/40",
     };
-    return map[state] ?? "bg-slate-500/20 text-slate-400 border-slate-500/40";
+    return map[normalized] ?? "bg-slate-500/20 text-slate-400 border-slate-500/40";
   };
 
   if (loading || pageLoading) {

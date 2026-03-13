@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { apiClient, Server } from "@/lib/api";
+import Link from "next/link";
+import { type ComponentType, useEffect, useMemo, useState } from "react";
+import { Activity, Pencil, Plus, Server, ShieldCheck, Trash2 } from "lucide-react";
+import { apiClient, Server as ServerType } from "@/lib/api";
 
 type ServerFormData = {
   name: string;
@@ -13,54 +15,59 @@ type ServerFormData = {
   ssh_password: string;
 };
 
+const emptyForm: ServerFormData = {
+  name: "",
+  host: "",
+  ssh_user: "ubuntu",
+  ssh_port: 22,
+  ssh_auth_method: "private_key",
+  ssh_key: "",
+  ssh_password: "",
+};
+
 export default function ServersPage() {
-  const [servers, setServers] = useState<Server[]>([]);
+  const [servers, setServers] = useState<ServerType[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<ServerFormData>({
-    name: "",
-    host: "",
-    ssh_user: "",
-    ssh_port: 22,
-    ssh_auth_method: "private_key",
-    ssh_key: "",
-    ssh_password: "",
-  });
+  const [checkingId, setCheckingId] = useState<string | null>(null);
+  const [formData, setFormData] = useState<ServerFormData>(emptyForm);
+  const [statusMap, setStatusMap] = useState<Record<string, "online" | "offline" | "unknown">>({});
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
   useEffect(() => {
-    loadServers();
+    void loadServers();
   }, []);
 
-  const loadServers = async () => {
+  async function loadServers() {
     try {
       const data = await apiClient.getServers();
       setServers(data);
+      setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load servers");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     setSuccess("");
 
-    try {
-      const payload = {
-        name: formData.name,
-        host: formData.host,
-        ssh_user: formData.ssh_user,
-        ssh_port: formData.ssh_port,
-        ssh_auth_method: formData.ssh_auth_method,
-        ssh_key: formData.ssh_auth_method === "private_key" ? formData.ssh_key : undefined,
-        ssh_password: formData.ssh_auth_method === "password" ? formData.ssh_password : undefined,
-      };
+    const payload = {
+      name: formData.name,
+      host: formData.host,
+      ssh_user: formData.ssh_user,
+      ssh_port: formData.ssh_port,
+      ssh_auth_method: formData.ssh_auth_method,
+      ssh_key: formData.ssh_auth_method === "private_key" ? formData.ssh_key : undefined,
+      ssh_password: formData.ssh_auth_method === "password" ? formData.ssh_password : undefined,
+    };
 
+    try {
       if (editingId) {
         await apiClient.updateServer(editingId, payload);
         setSuccess("Server updated successfully");
@@ -69,36 +76,33 @@ export default function ServersPage() {
         setSuccess("Server created successfully");
       }
 
-      setFormData({
-        name: "",
-        host: "",
-        ssh_user: "",
-        ssh_port: 22,
-        ssh_auth_method: "private_key",
-        ssh_key: "",
-        ssh_password: "",
-      });
       setShowForm(false);
       setEditingId(null);
+      setFormData(emptyForm);
       await loadServers();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Operation failed");
     }
-  };
+  }
 
-  const handleDelete = async (serverId: string) => {
-    if (confirm("Are you sure you want to delete this server?")) {
-      try {
-        await apiClient.deleteServer(serverId);
-        setSuccess("Server deleted successfully");
-        await loadServers();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Delete failed");
-      }
+  async function handleDelete(serverId: string) {
+    if (!confirm("Delete this server and related chats?")) return;
+    try {
+      await apiClient.deleteServer(serverId);
+      setServers((prev) => prev.filter((s) => s.id !== serverId));
+      setSuccess("Server deleted");
+      setStatusMap((prev) => {
+        const copy = { ...prev };
+        delete copy[serverId];
+        return copy;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
     }
-  };
+  }
 
-  const handleEdit = (server: Server) => {
+  function startEdit(server: ServerType) {
+    setEditingId(server.id);
     setFormData({
       name: server.name,
       host: server.host,
@@ -108,242 +112,272 @@ export default function ServersPage() {
       ssh_key: "",
       ssh_password: "",
     });
-    setEditingId(server.id);
     setShowForm(true);
-  };
+  }
 
-  const handleCancel = () => {
+  function resetForm() {
     setShowForm(false);
     setEditingId(null);
-    setFormData({
-      name: "",
-      host: "",
-      ssh_user: "",
-      ssh_port: 22,
-      ssh_auth_method: "private_key",
-      ssh_key: "",
-      ssh_password: "",
-    });
-  };
+    setFormData(emptyForm);
+  }
+
+  async function checkStatus(serverId: string) {
+    setCheckingId(serverId);
+    try {
+      const response = await apiClient.getServerStatus(serverId);
+      const status = String((response as { status?: string }).status ?? "unknown");
+      setStatusMap((prev) => ({
+        ...prev,
+        [serverId]: status === "online" ? "online" : status === "offline" ? "offline" : "unknown",
+      }));
+    } catch {
+      setStatusMap((prev) => ({ ...prev, [serverId]: "offline" }));
+    } finally {
+      setCheckingId(null);
+    }
+  }
+
+  const metrics = useMemo(() => {
+    const keyAuth = servers.filter((s) => (s.ssh_auth_method ?? "private_key") === "private_key").length;
+    const passwordAuth = servers.length - keyAuth;
+    const online = Object.values(statusMap).filter((v) => v === "online").length;
+    return { total: servers.length, keyAuth, passwordAuth, online };
+  }, [servers, statusMap]);
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-4xl font-bold text-white">Servers</h1>
-          <p className="text-slate-400 mt-2">Manage your SSH servers</p>
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/75 p-6 sm:p-8">
+        <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Infrastructure</p>
+            <h1 className="mt-2 text-3xl font-semibold text-white">Servers</h1>
+            <p className="mt-3 text-sm text-slate-300">SSH server inventory, authentication setup, and health checks in one place.</p>
+          </div>
+          <button
+            onClick={() => setShowForm((prev) => !prev)}
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:from-cyan-400 hover:to-blue-500"
+          >
+            <Plus className="h-4 w-4" />
+            {showForm ? "Close Form" : "New Server"}
+          </button>
         </div>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-semibold rounded-lg hover:from-blue-600 hover:to-purple-700 transition"
-        >
-          {showForm ? "Cancel" : "+ New Server"}
-        </button>
-      </div>
+      </section>
 
-      {/* Messages */}
-      {error && (
-        <div className="p-4 bg-red-500/10 border border-red-500/50 rounded-lg">
-          <p className="text-red-400">{error}</p>
-        </div>
-      )}
-      {success && (
-        <div className="p-4 bg-green-500/10 border border-green-500/50 rounded-lg">
-          <p className="text-green-400">{success}</p>
-        </div>
-      )}
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard title="Total" value={metrics.total} icon={Server} />
+        <StatCard title="Online Checked" value={metrics.online} icon={Activity} />
+        <StatCard title="Private Key" value={metrics.keyAuth} icon={ShieldCheck} />
+        <StatCard title="Password" value={metrics.passwordAuth} icon={ShieldCheck} />
+      </section>
 
-      {/* Form */}
+      {error && <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>}
+      {success && <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{success}</div>}
+
       {showForm && (
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
-          <h2 className="text-xl font-bold text-white mb-6">
-            {editingId ? "Edit Server" : "Add New Server"}
-          </h2>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Server Name
-                </label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) =>
-                    setFormData({ ...formData, name: e.target.value })
-                  }
-                  required
-                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  Host Address
-                </label>
-                <input
-                  type="text"
-                  value={formData.host}
-                  onChange={(e) =>
-                    setFormData({ ...formData, host: e.target.value })
-                  }
-                  placeholder="192.168.1.100"
-                  required
-                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  SSH User
-                </label>
-                <input
-                  type="text"
-                  value={formData.ssh_user}
-                  onChange={(e) =>
-                    setFormData({ ...formData, ssh_user: e.target.value })
-                  }
-                  placeholder="ubuntu"
-                  required
-                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">
-                  SSH Port
-                </label>
-                <input
-                  type="number"
-                  value={formData.ssh_port}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      ssh_port: parseInt(e.target.value),
-                    })
-                  }
-                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+        <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
+          <h2 className="text-lg font-semibold text-white">{editingId ? "Edit Server" : "Create Server"}</h2>
+          <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <input
+                type="text"
+                value={formData.name}
+                onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
+                placeholder="Server name"
+                required
+                className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
+              />
+              <input
+                type="text"
+                value={formData.host}
+                onChange={(e) => setFormData((prev) => ({ ...prev, host: e.target.value }))}
+                placeholder="Host (IP or DNS)"
+                required
+                className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
+              />
+              <input
+                type="text"
+                value={formData.ssh_user}
+                onChange={(e) => setFormData((prev) => ({ ...prev, ssh_user: e.target.value }))}
+                placeholder="SSH user"
+                required
+                className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
+              />
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={formData.ssh_port}
+                onChange={(e) =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    ssh_port: Number(e.target.value) || 22,
+                  }))
+                }
+                placeholder="SSH port"
+                required
+                className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
+              />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                SSH Authentication
-              </label>
-              <div className="grid grid-cols-2 gap-2 mb-4">
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, ssh_auth_method: "private_key", ssh_password: "" })}
-                  className={`px-4 py-2 rounded-lg border text-sm transition ${
-                    formData.ssh_auth_method === "private_key"
-                      ? "border-blue-500 bg-blue-500/20 text-blue-300"
-                      : "border-slate-600 bg-slate-700 text-slate-300"
-                  }`}
-                >
-                  Private Key
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, ssh_auth_method: "password", ssh_key: "" })}
-                  className={`px-4 py-2 rounded-lg border text-sm transition ${
-                    formData.ssh_auth_method === "password"
-                      ? "border-blue-500 bg-blue-500/20 text-blue-300"
-                      : "border-slate-600 bg-slate-700 text-slate-300"
-                  }`}
-                >
-                  Password
-                </button>
-              </div>
 
-              {formData.ssh_auth_method === "private_key" ? (
-                <textarea
-                  value={formData.ssh_key}
-                  onChange={(e) => setFormData({ ...formData, ssh_key: e.target.value })}
-                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                  required
-                  rows={6}
-                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                />
-              ) : (
-                <input
-                  type="password"
-                  value={formData.ssh_password}
-                  onChange={(e) => setFormData({ ...formData, ssh_password: e.target.value })}
-                  placeholder="SSH password"
-                  required
-                  className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              )}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    ssh_auth_method: "private_key",
+                    ssh_password: "",
+                  }))
+                }
+                className={`rounded-xl border px-4 py-2 text-sm ${
+                  formData.ssh_auth_method === "private_key"
+                    ? "border-cyan-400 bg-cyan-500/15 text-cyan-100"
+                    : "border-slate-700 bg-slate-800 text-slate-300"
+                }`}
+              >
+                Private Key
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setFormData((prev) => ({
+                    ...prev,
+                    ssh_auth_method: "password",
+                    ssh_key: "",
+                  }))
+                }
+                className={`rounded-xl border px-4 py-2 text-sm ${
+                  formData.ssh_auth_method === "password"
+                    ? "border-cyan-400 bg-cyan-500/15 text-cyan-100"
+                    : "border-slate-700 bg-slate-800 text-slate-300"
+                }`}
+              >
+                Password
+              </button>
             </div>
-            <div className="flex space-x-4">
+
+            {formData.ssh_auth_method === "private_key" ? (
+              <textarea
+                value={formData.ssh_key}
+                onChange={(e) => setFormData((prev) => ({ ...prev, ssh_key: e.target.value }))}
+                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                rows={6}
+                required
+                className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 font-mono text-sm text-white outline-none focus:border-cyan-400"
+              />
+            ) : (
+              <input
+                type="password"
+                value={formData.ssh_password}
+                onChange={(e) => setFormData((prev) => ({ ...prev, ssh_password: e.target.value }))}
+                placeholder="SSH password"
+                required
+                className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
+              />
+            )}
+
+            <div className="flex gap-3">
               <button
                 type="submit"
-                className="px-6 py-2 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-semibold rounded-lg hover:from-blue-600 hover:to-purple-700 transition"
+                className="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-3 text-sm font-semibold text-white"
               >
                 {editingId ? "Update Server" : "Create Server"}
               </button>
               <button
                 type="button"
-                onClick={handleCancel}
-                className="px-6 py-2 bg-slate-700 hover:bg-slate-600 text-white font-semibold rounded-lg transition"
+                onClick={resetForm}
+                className="rounded-xl border border-slate-700 px-5 py-3 text-sm text-slate-200"
               >
                 Cancel
               </button>
             </div>
           </form>
-        </div>
+        </section>
       )}
 
-      {/* Servers List */}
-      {loading ? (
-        <div className="text-center py-12">
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
+        {loading ? (
           <p className="text-slate-400">Loading servers...</p>
-        </div>
-      ) : servers.length === 0 ? (
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-12 text-center">
-          <p className="text-slate-400 mb-4">No servers configured yet</p>
-          <button
-            onClick={() => setShowForm(true)}
-            className="inline-block px-6 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition"
-          >
-            Add your first server
-          </button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {servers.map((server) => (
-            <div
-              key={server.id}
-              className="bg-slate-800 border border-slate-700 rounded-xl p-6 hover:border-slate-600 transition"
-            >
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h3 className="text-lg font-bold text-white">{server.name}</h3>
-                  <p className="text-slate-400 text-sm">{server.host}</p>
+        ) : servers.length === 0 ? (
+          <p className="text-slate-400">No servers configured yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {servers.map((server) => {
+              const status = statusMap[server.id] ?? "unknown";
+              return (
+                <div
+                  key={server.id}
+                  className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/45 p-4 md:flex-row md:items-center md:justify-between"
+                >
+                  <div>
+                    <p className="font-semibold text-white">{server.name}</p>
+                    <p className="mt-1 text-sm text-slate-400">{server.host}:{server.ssh_port} as {server.ssh_user}</p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                        status === "online"
+                          ? "border-emerald-400/40 bg-emerald-500/15 text-emerald-200"
+                          : status === "offline"
+                            ? "border-rose-400/40 bg-rose-500/15 text-rose-200"
+                            : "border-slate-500/40 bg-slate-500/15 text-slate-300"
+                      }`}
+                    >
+                      {status}
+                    </span>
+                    <button
+                      onClick={() => void checkStatus(server.id)}
+                      disabled={checkingId === server.id}
+                      className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200 transition hover:border-cyan-300/40 disabled:opacity-50"
+                    >
+                      {checkingId === server.id ? "Checking..." : "Check Status"}
+                    </button>
+                    <Link
+                      href={`/dashboard/server/${server.id}`}
+                      className="inline-flex items-center gap-1 rounded-lg border border-cyan-400/40 bg-cyan-500/10 px-3 py-1.5 text-xs text-cyan-100"
+                    >
+                      Open
+                    </Link>
+                    <button
+                      onClick={() => startEdit(server)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-200"
+                    >
+                      <Pencil className="h-3.5 w-3.5" /> Edit
+                    </button>
+                    <button
+                      onClick={() => void handleDelete(server.id)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-200"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Delete
+                    </button>
+                  </div>
                 </div>
-                <span className="px-3 py-1 bg-green-500/20 border border-green-500/50 rounded-full text-green-400 text-xs font-medium">
-                  Active
-                </span>
-              </div>
-              <div className="space-y-2 mb-4 text-sm text-slate-400">
-                <p>👤 User: {server.ssh_user}</p>
-                <p>🔌 Port: {server.ssh_port}</p>
-              </div>
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => handleEdit(server)}
-                  className="flex-1 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition text-sm font-medium"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => handleDelete(server.id)}
-                  className="flex-1 px-3 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg transition text-sm font-medium border border-red-500/50"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
+  );
+}
+
+function StatCard({
+  title,
+  value,
+  icon: Icon,
+}: {
+  title: string;
+  value: number;
+  icon: ComponentType<{ className?: string }>;
+}) {
+  return (
+    <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+      <div className="mb-3 inline-flex rounded-lg border border-cyan-400/30 bg-cyan-500/10 p-2">
+        <Icon className="h-4 w-4 text-cyan-200" />
+      </div>
+      <p className="text-xs uppercase tracking-[0.14em] text-slate-400">{title}</p>
+      <p className="mt-2 text-3xl font-semibold text-white">{value}</p>
+    </article>
   );
 }

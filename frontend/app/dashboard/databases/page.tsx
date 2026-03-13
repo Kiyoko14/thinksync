@@ -1,198 +1,191 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { apiClient, Database, Server } from "@/lib/api";
+import { type ComponentType, useEffect, useMemo, useState } from "react";
+import { Copy, Database, Plus, Server } from "lucide-react";
+import { apiClient, Database as DatabaseType, Server as ServerType } from "@/lib/api";
 
 export default function DatabasesPage() {
-  const [databases, setDatabases] = useState<Database[]>([]);
-  const [servers, setServers] = useState<Server[]>([]);
+  const [databases, setDatabases] = useState<DatabaseType[]>([]);
+  const [servers, setServers] = useState<ServerType[]>([]);
   const [loading, setLoading] = useState(true);
-
   const [showForm, setShowForm] = useState(false);
   const [selectedServer, setSelectedServer] = useState("");
-
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    loadData();
+    void loadData();
   }, []);
 
-  const loadData = async () => {
+  async function loadData() {
     try {
       const [dbData, serverData] = await Promise.all([
         apiClient.getDatabases(),
         apiClient.getServers(),
       ]);
-
       setDatabases(dbData);
       setServers(serverData);
+      setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const handleCreateDatabase = async (e: React.FormEvent) => {
+  async function handleCreateDatabase(e: React.FormEvent) {
     e.preventDefault();
     setCreating(true);
     setError("");
-
+    setSuccess("");
     try {
-      const newDb = await apiClient.createDatabase({
+      const created = await apiClient.createDatabase({
         server_id: selectedServer || undefined,
       });
-
-      setDatabases([...databases, newDb]);
+      setDatabases((prev) => [created, ...prev]);
       setSuccess("Database created successfully");
-
-      setShowForm(false);
       setSelectedServer("");
+      setShowForm(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create database");
     } finally {
       setCreating(false);
     }
-  };
+  }
 
-  const copyToClipboard = (text?: string) => {
+  async function copyToClipboard(text?: string) {
     if (!text) return;
-    navigator.clipboard.writeText(text);
-    setSuccess("Copied to clipboard");
-  };
+    await navigator.clipboard.writeText(text);
+    setSuccess("Connection URL copied");
+  }
+
+  const metrics = useMemo(() => {
+    const attached = databases.filter((d) => Boolean(d.server_id)).length;
+    const global = databases.length - attached;
+    return { total: databases.length, attached, global };
+  }, [databases]);
 
   return (
     <div className="space-y-6">
-
-      {/* Header */}
-
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-4xl font-bold text-white">Databases</h1>
-          <p className="text-slate-400 mt-2">
-            Manage your database instances
-          </p>
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/75 p-6 sm:p-8">
+        <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Data Layer</p>
+            <h1 className="mt-2 text-3xl font-semibold text-white">Databases</h1>
+            <p className="mt-3 text-sm text-slate-300">Manage provisioned database projects and attach them to specific servers.</p>
+          </div>
+          <button
+            onClick={() => setShowForm((prev) => !prev)}
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:from-cyan-400 hover:to-blue-500"
+          >
+            <Plus className="h-4 w-4" />
+            {showForm ? "Close Form" : "New Database"}
+          </button>
         </div>
+      </section>
 
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-semibold rounded-lg hover:from-blue-600 hover:to-purple-700 transition"
-        >
-          {showForm ? "Cancel" : "+ New Database"}
-        </button>
-      </div>
+      <section className="grid gap-4 sm:grid-cols-3">
+        <MetricCard title="Total" value={metrics.total} icon={Database} />
+        <MetricCard title="Attached" value={metrics.attached} icon={Server} />
+        <MetricCard title="Global" value={metrics.global} icon={Database} />
+      </section>
 
-      {/* Messages */}
-
-      {error && (
-        <div className="p-4 bg-red-500/10 border border-red-500/50 rounded-lg">
-          <p className="text-red-400">{error}</p>
-        </div>
-      )}
-
-      {success && (
-        <div className="p-4 bg-green-500/10 border border-green-500/50 rounded-lg">
-          <p className="text-green-400">{success}</p>
-        </div>
-      )}
-
-      {/* Form */}
+      {error && <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>}
+      {success && <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{success}</div>}
 
       {showForm && (
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
-          <h2 className="text-xl font-bold text-white mb-6">
-            Create New Database
-          </h2>
-
-          <form onSubmit={handleCreateDatabase} className="space-y-4">
-
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Associated Server (Optional)
-              </label>
-
+        <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
+          <h2 className="text-lg font-semibold text-white">Create Database</h2>
+          <form onSubmit={handleCreateDatabase} className="mt-4 flex flex-col gap-4 md:flex-row md:items-end">
+            <div className="flex-1">
+              <label className="mb-2 block text-sm text-slate-400">Attach to server (optional)</label>
               <select
                 value={selectedServer}
                 onChange={(e) => setSelectedServer(e.target.value)}
-                className="w-full px-4 py-2 bg-slate-700 border border-slate-600 rounded-lg text-white"
+                className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm text-white outline-none focus:border-cyan-400"
               >
-                <option value="">Global Database</option>
-
+                <option value="">Global database</option>
                 {servers.map((server) => (
                   <option key={server.id} value={server.id}>
-                    {server.name} ({server.host ?? "unknown"})
+                    {server.name} ({server.host})
                   </option>
                 ))}
               </select>
             </div>
-
             <button
               type="submit"
               disabled={creating}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg"
+              className="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {creating ? "Creating..." : "Create Database"}
+              {creating ? "Creating..." : "Create"}
             </button>
-
           </form>
-        </div>
+        </section>
       )}
 
-      {/* Databases */}
+      <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6">
+        {loading ? (
+          <p className="text-slate-400">Loading databases...</p>
+        ) : databases.length === 0 ? (
+          <p className="text-slate-400">No databases created yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {databases.map((db) => {
+              const serverName = db.server_id
+                ? servers.find((s) => s.id === db.server_id)?.name ?? "Unknown server"
+                : "Global";
 
-      {loading ? (
-        <p className="text-slate-400">Loading databases...</p>
-      ) : databases.length === 0 ? (
-        <p className="text-slate-400">No databases yet</p>
-      ) : (
-        <div className="grid gap-6">
-
-          {databases.map((db) => (
-
-            <div
-              key={db.id}
-              className="bg-slate-800 border border-slate-700 rounded-xl p-6"
-            >
-
-              <h3 className="text-lg font-bold text-white">
-                Database {(db.project_id ?? "unknown").substring(0, 8)}
-              </h3>
-
-              <p className="text-slate-400 text-sm mt-1">
-                Project ID: {db.project_id ?? "unknown"}
-              </p>
-
-              <div className="mt-3 flex items-center gap-2">
-
-                <code className="px-3 py-2 bg-slate-700 rounded text-xs text-slate-300">
-                  {db.db_url ?? "Not available"}
-                </code>
-
-                <button
-                  onClick={() => copyToClipboard(db.db_url)}
-                  className="px-3 py-2 bg-slate-700 rounded"
+              return (
+                <div
+                  key={db.id}
+                  className="flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/45 p-4 md:flex-row md:items-center md:justify-between"
                 >
-                  📋
-                </button>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-white">Project {String(db.project_id ?? "unknown").slice(0, 8)}</p>
+                    <p className="mt-1 text-sm text-slate-400">Attached: {serverName}</p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Created {db.created_at ? new Date(db.created_at).toLocaleString() : "-"}
+                    </p>
+                  </div>
 
-              </div>
-
-              <p className="text-xs text-slate-400 mt-3">
-                Created{" "}
-                {db.created_at
-                  ? new Date(db.created_at).toLocaleDateString()
-                  : "Unknown"}
-              </p>
-
-            </div>
-
-          ))}
-
-        </div>
-      )}
-
+                  <div className="flex items-center gap-2">
+                    <code className="max-w-[460px] truncate rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs text-slate-200">
+                      {db.db_url ?? "No URL"}
+                    </code>
+                    <button
+                      onClick={() => void copyToClipboard(db.db_url)}
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-200"
+                    >
+                      <Copy className="h-3.5 w-3.5" /> Copy
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
+  );
+}
+
+function MetricCard({
+  title,
+  value,
+  icon: Icon,
+}: {
+  title: string;
+  value: number;
+  icon: ComponentType<{ className?: string }>;
+}) {
+  return (
+    <article className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+      <div className="mb-3 inline-flex rounded-lg border border-cyan-400/30 bg-cyan-500/10 p-2">
+        <Icon className="h-4 w-4 text-cyan-200" />
+      </div>
+      <p className="text-xs uppercase tracking-[0.14em] text-slate-400">{title}</p>
+      <p className="mt-2 text-3xl font-semibold text-white">{value}</p>
+    </article>
   );
 }

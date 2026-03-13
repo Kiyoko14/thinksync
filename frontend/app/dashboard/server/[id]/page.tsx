@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { MessageSquare, Plus, Trash2 } from "lucide-react";
 import { apiClient, Chat, Server } from "@/lib/api";
 
 export default function ServerDetailPage() {
@@ -13,7 +14,15 @@ export default function ServerDetailPage() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [chatName, setChatName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [deletingChatId, setDeletingChatId] = useState<string | null>(null);
   const [error, setError] = useState("");
+
+  const normalizeName = (name: string) =>
+    name
+      .trim()
+      .replace(/\s+/g, " ")
+      .toLowerCase();
 
   const loadData = useCallback(async () => {
     if (!serverId) return;
@@ -41,13 +50,42 @@ export default function ServerDetailPage() {
     event.preventDefault();
     if (!serverId) return;
 
+    const normalized = normalizeName(chatName);
+    if (normalized.length < 2) {
+      setError("Chat nomi kamida 2 ta belgi bo'lishi kerak");
+      return;
+    }
+
+    const duplicateExists = chats.some((chat) => normalizeName(chat.name) === normalized);
+    if (duplicateExists) {
+      setError("Bir xil nomdagi chat ochish mumkin emas");
+      return;
+    }
+
     try {
-      await apiClient.createChat({ server_id: serverId, name: chatName });
+      setCreating(true);
+      await apiClient.createChat({ server_id: serverId, name: normalized });
       setChatName("");
       setShowModal(false);
+      setError("");
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Chat yaratilmadi");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleDeleteChat = async (chatId: string) => {
+    if (!confirm("Ushbu chat va unga bog'liq barcha ma'lumotlar o'chirilsinmi?")) return;
+    try {
+      setDeletingChatId(chatId);
+      await apiClient.deleteChat(chatId);
+      setChats((prev) => prev.filter((chat) => chat.id !== chatId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Chat o'chirilmadi");
+    } finally {
+      setDeletingChatId(null);
     }
   };
 
@@ -64,7 +102,9 @@ export default function ServerDetailPage() {
             onClick={() => setShowModal(true)}
             className="rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 py-3 text-sm font-semibold text-white"
           >
-            + Chat qo&apos;shish
+            <span className="inline-flex items-center gap-2">
+              <Plus className="h-4 w-4" /> Chat qo&apos;shish
+            </span>
           </button>
         </div>
       </section>
@@ -78,14 +118,31 @@ export default function ServerDetailPage() {
         ) : (
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             {chats.map((chat) => (
-              <Link
+              <div
                 key={chat.id}
-                href={`/dashboard/server/${serverId}/chat/${chat.id}`}
                 className="rounded-xl border border-slate-700 bg-slate-800/70 p-4 transition hover:border-blue-400"
               >
-                <p className="font-semibold text-white">{chat.name}</p>
-                <p className="mt-2 line-clamp-2 text-sm text-slate-400">Oxirgi xabarni chat ichida ko&apos;rasiz.</p>
-              </Link>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-white">{chat.name}</p>
+                    <p className="mt-2 line-clamp-2 text-sm text-slate-400">Agent suhbatini oching va shu chat kontekstida ishlang.</p>
+                  </div>
+                  <button
+                    onClick={() => void handleDeleteChat(chat.id)}
+                    disabled={deletingChatId === chat.id}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-200 disabled:opacity-50"
+                    title="Delete chat"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+                <Link
+                  href={`/dashboard/server/${serverId}/chat/${chat.id}`}
+                  className="mt-4 inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-100 transition hover:border-cyan-300/40"
+                >
+                  <MessageSquare className="h-4 w-4" /> Chatni ochish
+                </Link>
+              </div>
             ))}
           </div>
         )}
@@ -103,6 +160,9 @@ export default function ServerDetailPage() {
                 placeholder="Chat nomi"
                 className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm text-white outline-none focus:border-blue-500"
               />
+              <p className="text-xs text-slate-400">
+                Muhim: bitta server ichida bir xil nomdagi chat ochish qat&apos;iyan taqiqlangan.
+              </p>
               <div className="flex gap-3">
                 <button
                   type="button"
@@ -113,9 +173,10 @@ export default function ServerDetailPage() {
                 </button>
                 <button
                   type="submit"
+                  disabled={creating}
                   className="flex-1 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-4 py-3 text-sm font-semibold text-white"
                 >
-                  Saqlash
+                  {creating ? "Saqlanmoqda..." : "Saqlash"}
                 </button>
               </div>
             </form>

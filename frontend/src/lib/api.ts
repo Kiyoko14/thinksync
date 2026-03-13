@@ -74,6 +74,18 @@ export type Deployment = {
   created_at: string;
 };
 
+export interface DeploymentStatus {
+  deployment_id: string;
+  status: string;
+  run?: {
+    run_id?: string;
+    status?: string;
+    current_stage?: string;
+    duration_seconds?: number;
+    stage_results?: Array<{ name?: string; status?: string }>;
+  } | null;
+}
+
 export type SendMessageResponse = {
   user_message: Message;
   assistant_message: Message;
@@ -135,6 +147,11 @@ export interface Secret {
   name: string;
   server_id: string;
   created_at: string;
+}
+
+export interface LogHistoryEntry {
+  line: string;
+  ts?: number | string;
 }
 
 export interface AgentStats {
@@ -302,6 +319,12 @@ export const apiClient = {
     });
   },
 
+  async deleteChat(chatId: string): Promise<{ message: string; chat_id: string; server_id: string }> {
+    return request<{ message: string; chat_id: string; server_id: string }>(`/chats/${chatId}`, {
+      method: "DELETE",
+    });
+  },
+
   // Messages
   async getMessages(chatId: string): Promise<Message[]> {
     return request<Message[]>(`/chats/${chatId}/messages`);
@@ -432,7 +455,13 @@ export const apiClient = {
       limit?: number
     ): Promise<{ lines: string[] }> {
       const q = limit !== undefined ? `?limit=${limit}` : "";
-      return request<{ lines: string[] }>(`/logs/history/${serverId}${q}`);
+      const payload = await request<{ lines?: Array<string | LogHistoryEntry> }>(
+        `/logs/history/${serverId}${q}`
+      );
+      const normalized = (payload.lines ?? []).map((entry) =>
+        typeof entry === "string" ? entry : String(entry?.line ?? "")
+      );
+      return { lines: normalized.filter((line) => line.length > 0) };
     },
   },
 
@@ -473,13 +502,18 @@ export const apiClient = {
     async get(id: string): Promise<Deployment> {
       return request<Deployment>(`/deployments/${id}`);
     },
-    async execute(id: string): Promise<{ message?: string }> {
-      return request<{ message?: string }>(`/deployments/${id}/execute`, {
+    async execute(
+      id: string
+    ): Promise<{ message?: string; run_id?: string; status?: string }> {
+      return request<{ message?: string; run_id?: string; status?: string }>(
+        `/deployments/${id}/execute`,
+        {
         method: "POST",
-      });
+        }
+      );
     },
-    async getStatus(id: string): Promise<Deployment> {
-      return request<Deployment>(`/deployments/${id}/status`);
+    async getStatus(id: string): Promise<DeploymentStatus> {
+      return request<DeploymentStatus>(`/deployments/${id}/status`);
     },
   },
 };

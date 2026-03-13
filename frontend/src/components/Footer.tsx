@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Github, Mail } from "lucide-react";
+import BrandLogo from "@/components/BrandLogo";
 
 export default function Footer() {
   return (
@@ -25,9 +26,7 @@ export default function Footer() {
         <div className="grid gap-8 md:grid-cols-3">
           <div>
             <div className="mb-4 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 text-sm font-bold text-white shadow-lg shadow-cyan-500/20">
-                TS
-              </div>
+              <BrandLogo compact />
               <p className="text-lg font-semibold text-white">ThinkSync</p>
             </div>
             <p className="max-w-sm text-sm leading-6 text-slate-300">

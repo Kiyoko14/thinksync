@@ -20,6 +20,7 @@ import {
   Settings,
   X,
 } from "lucide-react";
+import BrandLogo from "@/components/BrandLogo";
 import { useAuth } from "@/context/AuthContext";
 
 type MenuItem = {
@@ -88,13 +89,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
       >
         <div className="mb-8 flex items-center justify-between">
           <Link href="/dashboard" className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 text-sm font-bold">
-              TS
-            </div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Platform</p>
-              <p className="text-lg font-semibold">ThinkSync</p>
-            </div>
+            <BrandLogo />
           </Link>
           <button className="text-slate-400 lg:hidden" onClick={() => setSidebarOpen(false)}>
             <X className="h-5 w-5" />

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { apiClient, Server, Deployment } from "@/lib/api";
+import { apiClient, Server, Deployment, DeploymentStatus } from "@/lib/api";
 import { Rocket, Plus, Play, Info, X } from "lucide-react";
 
 function StatusBadge({ status }: { status: string }) {
@@ -33,7 +33,7 @@ export default function DeploymentsPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const [statusModal, setStatusModal] = useState<Deployment | null>(null);
+  const [statusModal, setStatusModal] = useState<DeploymentStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -347,25 +347,29 @@ export default function DeploymentsPage() {
                 <StatusBadge status={statusModal.status} />
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">ID</span>
-                <span className="text-sm font-mono text-slate-300">{statusModal.id}</span>
+                <span className="text-sm text-slate-400">Deployment ID</span>
+                <span className="text-sm font-mono text-slate-300">{statusModal.deployment_id}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-400">Server</span>
-                <span className="text-sm text-slate-300">{getServerName(statusModal.server_id)}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">Language</span>
-                <span className="text-sm text-slate-300">{statusModal.language}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">Type</span>
-                <span className="text-sm text-slate-300">{statusModal.deployment_type}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">Created</span>
                 <span className="text-sm text-slate-300">
-                  {new Date(statusModal.created_at).toLocaleString()}
+                  {statusModal.run?.run_id ? `Run ${statusModal.run.run_id.slice(0, 8)}` : "Pending run"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-400">Run Status</span>
+                <span className="text-sm text-slate-300">{statusModal.run?.status ?? "not_started"}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-400">Current Stage</span>
+                <span className="text-sm text-slate-300">{statusModal.run?.current_stage ?? "-"}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-400">Duration</span>
+                <span className="text-sm text-slate-300">
+                  {statusModal.run?.duration_seconds !== undefined
+                    ? `${statusModal.run.duration_seconds}s`
+                    : "-"}
                 </span>
               </div>
             </div>
