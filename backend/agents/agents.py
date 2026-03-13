@@ -1,4 +1,4 @@
-from config import redis_client, openai_client, openai_model, supabase
+from config import redis_client, openai_client, openai_model, supabase, call_openai
 from agents.memory import agent_memory
 import json
 import re
@@ -161,7 +161,7 @@ Action types: create_directory, write_file, run_command, install_package, config
                 "content": f"Create a deployment plan for: {json.dumps(enhanced_context, indent=2)}"
             })
 
-            response = openai_client.chat.completions.create(
+            response = await call_openai(
                 model=openai_model,
                 messages=messages,
                 temperature=0.1,  # Low temperature for consistent planning
@@ -377,7 +377,7 @@ Action types: run_command, create_file, modify_file, install_package, start_serv
                 "content": f"Generate executable actions for this plan: {json.dumps(context_info, indent=2)}"
             })
 
-            response = openai_client.chat.completions.create(
+            response = await call_openai(
                 model=openai_model,
                 messages=messages,
                 temperature=0.2,
@@ -713,14 +713,14 @@ Always respond with a valid JSON object containing:
                 "content": f"Debug this error: {json.dumps(context_info, indent=2)}"
             })
 
-            response = openai_client.chat.completions.create(
+            response = await call_openai(
                 model=openai_model,
                 messages=messages,
                 temperature=0.1,
                 max_tokens=1500
             )
 
-            debug_text = (response.choices[0].message.content or "").strip()
+            debug_text = (response.choices[0].message.content if response else "").strip()
 
             # Clean JSON response
             if debug_text.startswith("```json"):
@@ -868,7 +868,7 @@ Always respond with a valid JSON object containing:
                 {"role": "user", "content": f"Audit this action for security: {json.dumps(audit_context, indent=2)}"}
             ]
 
-            response = openai_client.chat.completions.create(
+            response = await call_openai(
                 model=openai_model,
                 messages=messages,
                 temperature=0.1,

@@ -1,4 +1,5 @@
 import os
+import asyncio
 from supabase import create_client, Client
 from dotenv import load_dotenv
 import redis
@@ -45,7 +46,15 @@ if redis_url:
         _redis_kwargs: dict = {}
         if redis_url.startswith("rediss://"):
             _redis_kwargs["ssl_cert_reqs"] = None
-        redis_client = redis.from_url(redis_url, decode_responses=True, **_redis_kwargs)
+        redis_client = redis.from_url(
+            redis_url,
+            decode_responses=True,
+            max_connections=50,       # connection pool — handle 1 000 concurrent users
+            socket_connect_timeout=3, # fail fast if Redis is unreachable
+            socket_timeout=3,
+            retry_on_timeout=True,
+            **_redis_kwargs,
+        )
         redis_client.ping()  # Test connection
         _redis_type = "Upstash Redis" if redis_url.startswith("rediss://") else "Redis"
         print(f"✓ {_redis_type} initialized successfully")
@@ -69,3 +78,28 @@ if openai_key:
         openai_client = None
 else:
     print("⚠ OpenAI API key not found in environment variables")
+# ── Async OpenAI helper ───────────────────────────────────────────────────────
+# The standard `openai` SDK uses a synchronous HTTP client which blocks the
+# asyncio event loop.  `call_openai` wraps each call in asyncio.to_thread so
+# it runs in the thread pool and frees the event loop for other coroutines.
+# A semaphore caps concurrent OpenAI requests at 20 to stay within rate limits.
+
+_OPENAI_SEMAPHORE = asyncio.Semaphore(20)
+
+
+async def call_openai(**kwargs):
+    """
+    Semaphore-gated, thread-offloaded OpenAI chat completion call.
+
+    Usage:
+        response = await call_openai(model="gpt-4o-mini", messages=[...])
+        if response:
+            text = response.choices[0].message.content
+    """
+    if not openai_client:
+        return None
+    async with _OPENAI_SEMAPHORE:
+        return await asyncio.to_thread(
+            openai_client.chat.completions.create,
+            **kwargs,
+        )

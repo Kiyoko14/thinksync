@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from config import supabase, openai_client, openai_model
+from config import supabase, openai_client, openai_model, call_openai
 from models import Server
 from routers.auth import get_current_user
 from services.execution import ExecutionSandbox
@@ -190,7 +190,7 @@ async def deploy_code(server_id: str, request: DeploymentRequest, current_user: 
     # Use AI to generate deployment script
     if openai_client:
         try:
-            response = openai_client.chat.completions.create(
+            response = await call_openai(
                 model=openai_model,
                 messages=[
                     {

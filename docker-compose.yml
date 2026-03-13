@@ -4,11 +4,19 @@ services:
     container_name: thinksync-redis
     ports:
       - "6379:6379"
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --tcp-backlog 511
+      --maxclients 1000
+      --save ""
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
+    restart: always
     volumes:
       - redis-data:/data
     environment:
@@ -34,6 +42,9 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - ENVIRONMENT=production
+      # Number of uvicorn worker processes (1 per CPU core recommended)
+      - WEB_CONCURRENCY=${WEB_CONCURRENCY:-4}
+    restart: always
     depends_on:
       redis:
         condition: service_healthy
@@ -41,11 +52,20 @@ services:
       - ./backend:/app
     networks:
       - thinksync-network
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2g
+        reservations:
+          cpus: "0.5"
+          memory: 512m
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
+      start_period: 15s
 
   frontend:
     build:

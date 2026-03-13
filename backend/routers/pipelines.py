@@ -212,9 +212,18 @@ async def trigger_run(
     merged_env = {**pipeline_env, **request.override_env}
 
     # Prepend env-var export commands to the first stage if any vars defined.
-    # Use shlex.quote on values to prevent command injection.
+    # Validate key names and use shlex.quote on values to prevent command injection.
     if merged_env:
+        import re
         import shlex
+        _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+        invalid = [k for k in merged_env if not _ENV_NAME_RE.match(k)]
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid environment variable name(s): {', '.join(invalid)}. "
+                       "Names must match ^[A-Za-z_][A-Za-z0-9_]*$",
+            )
         export_cmds = [f"export {k}={shlex.quote(str(v))}" for k, v in merged_env.items()]
         stages = list(stages)
         first = dict(stages[0])

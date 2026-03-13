@@ -3,6 +3,11 @@ import asyncio
 from typing import Dict, Any
 import asyncssh
 
+# ── Concurrency limits ────────────────────────────────────────────────────────
+# Each SSH connection consumes file descriptors and memory on both sides.
+# Cap concurrent SSH sessions to prevent resource exhaustion under load.
+_SSH_SEMAPHORE = asyncio.Semaphore(50)
+
 class ExecutionSandbox:
     def __init__(self):
         self.banned_commands = [
@@ -101,27 +106,30 @@ class ExecutionSandbox:
             private_key = asyncssh.import_private_key(ssh_key)
             connect_kwargs["client_keys"] = [private_key]
 
-        try:
-            async with asyncssh.connect(**connect_kwargs) as conn:
-                command_result = await conn.run(command, check=False, timeout=timeout)
+        # Acquire semaphore before opening the SSH connection so we never exceed
+        # _SSH_SEMAPHORE concurrent SSH sessions under heavy load.
+        async with _SSH_SEMAPHORE:
+            try:
+                async with asyncssh.connect(**connect_kwargs) as conn:
+                    command_result = await conn.run(command, check=False, timeout=timeout)
+                    return {
+                        "status": "success" if command_result.exit_status == 0 else "error",
+                        "output": command_result.stdout,
+                        "error": command_result.stderr,
+                        "exit_status": command_result.exit_status,
+                    }
+            except asyncio.TimeoutError:
                 return {
-                    "status": "success" if command_result.exit_status == 0 else "error",
-                    "output": command_result.stdout,
-                    "error": command_result.stderr,
-                    "exit_status": command_result.exit_status,
+                    "status": "error",
+                    "error": f"Command timed out after {timeout} seconds",
+                    "output": "",
                 }
-        except asyncio.TimeoutError:
-            return {
-                "status": "error",
-                "error": f"Command timed out after {timeout} seconds",
-                "output": "",
-            }
-        except (asyncssh.Error, OSError) as exc:
-            return {
-                "status": "error",
-                "error": str(exc),
-                "output": "",
-            }
+            except (asyncssh.Error, OSError) as exc:
+                return {
+                    "status": "error",
+                    "error": str(exc),
+                    "output": "",
+                }
 
 execution_sandbox = ExecutionSandbox()
 

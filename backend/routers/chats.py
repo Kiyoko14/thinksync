@@ -5,7 +5,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from config import supabase, openai_client
+from config import supabase, openai_client, call_openai
 from models import Chat, Message
 from routers.auth import get_current_user
 from routers.servers import LOCAL_SERVERS
@@ -208,13 +208,13 @@ async def send_message(
                     "content": f"Local inspection result: {inspection_summary}"
                 })
 
-            ai_response = openai_client.chat.completions.create(
+            ai_response = await call_openai(
                 model="gpt-4o",
                 messages=messages_for_ai,
                 max_tokens=600,
                 temperature=0.4,
             )
-            assistant_text = ai_response.choices[0].message.content or "Javob olinmadi."
+            assistant_text = (ai_response.choices[0].message.content if ai_response else None) or "Javob olinmadi."
         except Exception as e:
             print(f"OpenAI error: {e}")
             assistant_text = inspection_summary or "Xabar qabul qilindi."

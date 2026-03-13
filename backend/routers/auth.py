@@ -1,6 +1,12 @@
+import asyncio
+import hashlib
+import json
+import threading
+from collections import OrderedDict
+
 from fastapi import APIRouter, Depends, Header, HTTPException
 from supabase import Client
-from config import supabase
+from config import supabase, redis_client
 from pydantic import BaseModel, EmailStr, Field
 from typing import Dict, Optional
 from uuid import uuid4
@@ -23,7 +29,50 @@ class SessionResponse(BaseModel):
     created_at: str
 
 
-LOCAL_SESSIONS: Dict[str, dict] = {}
+# ── Bounded in-memory session store (dev/fallback mode only) ─────────────────
+# Capped at 5 000 entries so the process never accumulates unbounded RAM when
+# Redis/Supabase are unavailable (e.g. local development).
+# Thread-safe via an internal threading.Lock (multiple uvicorn workers share
+# nothing, but a single worker may have multiple threads from to_thread calls).
+
+class _BoundedSessionStore(OrderedDict):
+    """Thread-safe LRU dict capped at *maxsize* entries."""
+
+    def __init__(self, maxsize: int = 5_000) -> None:
+        super().__init__()
+        self._maxsize = maxsize
+        self._lock = threading.Lock()
+
+    def __setitem__(self, key, value):
+        with self._lock:
+            if key in self:
+                self.move_to_end(key)
+            super().__setitem__(key, value)
+            if len(self) > self._maxsize:
+                self.popitem(last=False)  # evict oldest
+
+    def __getitem__(self, key):
+        with self._lock:
+            return super().__getitem__(key)
+
+    def __contains__(self, key):
+        with self._lock:
+            return super().__contains__(key)
+
+    def __delitem__(self, key):
+        with self._lock:
+            super().__delitem__(key)
+
+
+LOCAL_SESSIONS: _BoundedSessionStore = _BoundedSessionStore(maxsize=5_000)
+
+# TTL for caching Supabase JWT validation results in Redis
+_AUTH_CACHE_TTL = 300  # 5 minutes
+
+
+def _auth_cache_key(token: str) -> str:
+    digest = hashlib.sha256(token.encode()).hexdigest()[:32]
+    return f"auth:user:{digest}"
 
 
 def _extract_token(authorization: Optional[str]) -> Optional[str]:
@@ -114,7 +163,14 @@ async def get_current_user(
     authorization: Optional[str] = Header(default=None),
     supabase_client: Optional[Client] = Depends(lambda: supabase),
 ) -> dict:
-    """Dependency to get current authenticated user"""
+    """
+    Dependency to get current authenticated user.
+
+    Hot path optimisation — three layers to avoid hitting Supabase on every request:
+    1. In-process LOCAL_SESSIONS dict  (dev / fallback mode)
+    2. Redis cache (TTL=5 min)         — sub-ms lookup
+    3. Supabase JWT validation          — async thread, result cached in Redis
+    """
     token = _extract_token(authorization)
     if token and token in LOCAL_SESSIONS:
         return LOCAL_SESSIONS[token]
@@ -122,21 +178,37 @@ async def get_current_user(
     if not supabase_client or not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
+    # ── Redis cache check ─────────────────────────────────────────────────────
+    cache_key = _auth_cache_key(token)
+    if redis_client:
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                return json.loads(cached)
+        except Exception:
+            pass  # Cache miss — fall through to Supabase
+
+    # ── Supabase JWT validation (run in thread pool, non-blocking) ────────────
     try:
-        # Validate the client-supplied JWT against Supabase
-        user_response = supabase_client.auth.get_user(token)
+        user_response = await asyncio.to_thread(supabase_client.auth.get_user, token)
         if not user_response or not user_response.user:
-            raise HTTPException(
-                status_code=401,
-                detail="Not authenticated"
-            )
+            raise HTTPException(status_code=401, detail="Not authenticated")
 
         user = user_response.user
-        return {
+        user_dict = {
             "id": str(user.id),
             "email": user.email or "",
-            "created_at": str(user.created_at)
+            "created_at": str(user.created_at),
         }
+
+        # ── Cache result in Redis ─────────────────────────────────────────────
+        if redis_client:
+            try:
+                redis_client.setex(cache_key, _AUTH_CACHE_TTL, json.dumps(user_dict))
+            except Exception:
+                pass
+
+        return user_dict
     except HTTPException:
         raise
     except Exception as e:
