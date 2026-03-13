@@ -31,28 +31,39 @@ if supabase_url and supabase_key:
 else:
     print("⚠ Supabase credentials not found in environment variables")
 
-# Redis
+# Redis / Upstash Redis
+# Supports both standard Redis (redis://) and Upstash Redis (rediss://).
+# Upstash provides a Redis-compatible endpoint via rediss:// with TLS.
+# Set REDIS_URL to your Upstash connection string, e.g.:
+#   rediss://default:<TOKEN>@<HOST>.upstash.io:6380
 redis_url = os.getenv("REDIS_URL")
 redis_client: Optional[redis.Redis] = None
 if redis_url:
     try:
-        redis_client = redis.from_url(redis_url)
+        # ssl_cert_reqs=None allows connecting to Upstash and other hosted
+        # Redis services that use self-signed or managed TLS certificates.
+        _redis_kwargs: dict = {}
+        if redis_url.startswith("rediss://"):
+            _redis_kwargs["ssl_cert_reqs"] = None
+        redis_client = redis.from_url(redis_url, decode_responses=True, **_redis_kwargs)
         redis_client.ping()  # Test connection
-        print("✓ Redis initialized successfully")
+        _redis_type = "Upstash Redis" if redis_url.startswith("rediss://") else "Redis"
+        print(f"✓ {_redis_type} initialized successfully")
     except Exception as e:
         print(f"✗ Failed to initialize Redis: {e}")
         redis_client = None
 else:
-    print("⚠ Redis URL not found in environment variables")
+    print("⚠ REDIS_URL not set — caching and state tracking will use in-memory fallback")
 
-# OpenAI
+# OpenAI — default model is gpt-4o-mini for cost-efficient agent operations.
+# Override via the OPENAI_MODEL environment variable (e.g. gpt-4o for higher quality).
 openai_key = os.getenv("OPENAI_API_KEY")
-openai_model = os.getenv("OPENAI_MODEL", "gpt-4o")
+openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 openai_client: Optional[OpenAI] = None
 if openai_key:
     try:
         openai_client = OpenAI(api_key=openai_key)
-        print("✓ OpenAI initialized successfully")
+        print(f"✓ OpenAI initialized successfully (model: {openai_model})")
     except Exception as e:
         print(f"✗ Failed to initialize OpenAI: {e}")
         openai_client = None

@@ -1,7 +1,56 @@
-from config import redis_client, openai_client, openai_model
+from config import redis_client, openai_client, openai_model, supabase
 import json
 import re
+import hashlib
 from typing import Dict, List, Any, Optional
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _cache_key(prefix: str, payload: str) -> str:
+    """Create a stable Redis key by hashing *payload*."""
+    digest = hashlib.sha256(payload.encode()).hexdigest()[:32]
+    return f"{prefix}:{digest}"
+
+
+def _get_cached(key: str) -> Optional[Dict]:
+    """Return a cached dict from Redis, or None."""
+    if not redis_client:
+        return None
+    try:
+        raw = redis_client.get(key)
+        return json.loads(raw) if raw else None
+    except Exception as e:
+        print(f"Redis read error ({key}): {e}")
+        return None
+
+
+def _set_cached(key: str, value: Dict, ttl: int = 3600) -> None:
+    """Store *value* in Redis with a TTL (seconds)."""
+    if not redis_client:
+        return
+    try:
+        redis_client.setex(key, ttl, json.dumps(value))
+    except Exception as e:
+        print(f"Redis write error ({key}): {e}")
+
+
+def _save_agent_log(agent: str, input_hash: str, result: Dict) -> None:
+    """Persist an agent result to Supabase for auditing and analytics."""
+    if not supabase:
+        return
+    try:
+        supabase.table("agent_logs").insert({
+            "agent": agent,
+            "input_hash": input_hash,
+            "result": result,
+        }).execute()
+    except Exception as e:
+        # Non-fatal — table may not exist in all deployments
+        print(f"Supabase agent_logs insert warning: {e}")
+
 
 class PlannerAgent:
     """AI Agent for creating comprehensive deployment and DevOps plans"""
@@ -39,10 +88,23 @@ Action types: create_directory, write_file, run_command, install_package, config
 """
 
     async def create_plan(self, user_request: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Create a comprehensive deployment plan"""
+        """Create a comprehensive deployment plan.
+
+        Results are cached in Redis (1 hour) by a hash of the request so
+        repeated or similar requests skip the OpenAI round-trip entirely.
+        Every new plan is persisted to Supabase for auditing.
+        """
         try:
             if not openai_client:
                 return self._fallback_plan(user_request)
+
+            # ── Cache lookup ──────────────────────────────────────────────
+            cache_payload = json.dumps({"request": user_request, "env": (context or {}).get("environment", "production")}, sort_keys=True)
+            ckey = _cache_key("plan", cache_payload)
+            cached = _get_cached(ckey)
+            if cached:
+                print(f"PlannerAgent: cache hit ({ckey})")
+                return cached
 
             # Enhanced context for better planning
             enhanced_context = {
@@ -79,10 +141,9 @@ Action types: create_directory, write_file, run_command, install_package, config
             if not self._validate_plan(plan):
                 return self._fallback_plan(user_request)
 
-            # Cache plan for future reference
-            if redis_client:
-                cache_key = f"plan:{hash(user_request)}"
-                redis_client.setex(cache_key, 3600, json.dumps(plan))  # Cache for 1 hour
+            # ── Persist to Redis and Supabase ─────────────────────────────
+            _set_cached(ckey, plan, ttl=3600)
+            _save_agent_log("planner", ckey, plan)
 
             return plan
 
@@ -196,14 +257,26 @@ Action types: run_command, create_file, modify_file, install_package, start_serv
 """
 
     async def generate_action(self, plan: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Generate executable actions from a plan"""
+        """Generate executable actions from a plan.
+
+        Results are cached in Redis (30 min) by a hash of the plan so
+        identical plans skip the OpenAI round-trip.
+        """
         try:
             if not openai_client:
                 return self._fallback_actions(plan)
 
+            # ── Cache lookup ──────────────────────────────────────────────
+            cache_payload = json.dumps({"plan": plan, "env": (context or {}).get("environment", "production")}, sort_keys=True)
+            ckey = _cache_key("actions", cache_payload)
+            cached = _get_cached(ckey)
+            if cached:
+                print(f"ActionAgent: cache hit ({ckey})")
+                return cached
+
             context_info = {
                 "plan": plan,
-                "environment": context.get("environment", "development") if context else "development",
+                "environment": context.get("environment", "production") if context else "production",
                 "available_servers": context.get("servers", []) if context else [],
                 "security_level": context.get("security", "standard") if context else "standard"
             }
@@ -233,6 +306,10 @@ Action types: run_command, create_file, modify_file, install_package, start_serv
             # Validate actions
             if not self._validate_actions(actions):
                 return self._fallback_actions(plan)
+
+            # ── Persist to Redis and Supabase ─────────────────────────────
+            _set_cached(ckey, actions, ttl=1800)
+            _save_agent_log("action", ckey, actions)
 
             return actions
 
@@ -408,10 +485,26 @@ Always respond with a valid JSON object containing:
 """
 
     async def debug(self, error: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Debug an error and provide solutions"""
+        """Debug an error and provide solutions.
+
+        Caches results in Redis (15 min) — the same error in the same
+        environment very likely has the same root cause and fixes.
+        """
         try:
             if not openai_client:
                 return self._fallback_debug(error)
+
+            # ── Cache lookup ──────────────────────────────────────────────
+            cache_payload = json.dumps({
+                "error": error,
+                "env": (context or {}).get("environment", "unknown"),
+                "action_type": (context or {}).get("action_type", "unknown"),
+            }, sort_keys=True)
+            ckey = _cache_key("debug", cache_payload)
+            cached = _get_cached(ckey)
+            if cached:
+                print(f"DebuggerAgent: cache hit ({ckey})")
+                return cached
 
             context_info = {
                 "error_message": error,
@@ -446,6 +539,10 @@ Always respond with a valid JSON object containing:
             # Validate debug result
             if not self._validate_debug_result(debug_result):
                 return self._fallback_debug(error)
+
+            # ── Persist to Redis and Supabase ─────────────────────────────
+            _set_cached(ckey, debug_result, ttl=900)
+            _save_agent_log("debugger", ckey, debug_result)
 
             return debug_result
 
@@ -520,10 +617,25 @@ Always respond with a valid JSON object containing:
 """
 
     async def audit(self, action: Dict[str, Any], context: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Audit an action for security and compliance"""
+        """Audit an action for security and compliance.
+
+        Caches results in Redis (2 hours) — identical actions in the same
+        environment always receive the same audit decision.
+        """
         try:
             if not openai_client:
                 return self._fallback_audit(action)
+
+            # ── Cache lookup ──────────────────────────────────────────────
+            cache_payload = json.dumps({
+                "action": action,
+                "env": (context or {}).get("environment", "production"),
+            }, sort_keys=True)
+            ckey = _cache_key("audit", cache_payload)
+            cached = _get_cached(ckey)
+            if cached:
+                print(f"AuditorAgent: cache hit ({ckey})")
+                return cached
 
             audit_context = {
                 "action": action,
@@ -557,6 +669,10 @@ Always respond with a valid JSON object containing:
             # Validate audit result
             if not self._validate_audit_result(audit_result):
                 return self._fallback_audit(action)
+
+            # ── Persist to Redis and Supabase ─────────────────────────────
+            _set_cached(ckey, audit_result, ttl=7200)
+            _save_agent_log("auditor", ckey, audit_result)
 
             return audit_result
 
