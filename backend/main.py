@@ -46,6 +46,7 @@ async def health_check():
 
 # Include routers
 from routers import auth, servers, chats, agents, database, deployments, tasks, messages
+from routers import pipelines, monitor, secrets, logs
 app.include_router(auth.router)
 app.include_router(servers.router)
 app.include_router(chats.router)
@@ -54,3 +55,7 @@ app.include_router(agents.router)
 app.include_router(database.router)
 app.include_router(deployments.router)
 app.include_router(tasks.router)
+app.include_router(pipelines.router)
+app.include_router(monitor.router)
+app.include_router(secrets.router)
+app.include_router(logs.router)
