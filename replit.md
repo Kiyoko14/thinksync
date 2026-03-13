@@ -47,3 +47,6 @@ AI-powered DevOps platform for managing servers, deployments, databases, and AI 
 - Frontend `@/` path alias maps to `frontend/src/`
 - Backend config gracefully degrades when secrets are missing (logs warnings, doesn't crash)
 - CORS is configured to allow the Replit dev domain automatically via `REPLIT_DEV_DOMAIN` env var
+- **Standardized field**: SSH auth uses `ssh_auth_method` everywhere (no `auth_method` anywhere in the codebase)
+- **AI agent**: Chat `send_message` uses OpenAI GPT-4o when `OPENAI_API_KEY` is set; falls back gracefully
+- Chat page supports: optimistic UI, auto-scroll, typing indicator, full conversation history context

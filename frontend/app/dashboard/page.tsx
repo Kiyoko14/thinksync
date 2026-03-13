@@ -10,7 +10,7 @@ type NewServerForm = {
   host: string;
   ssh_user: string;
   ssh_port: number;
-  auth_method: "private_key" | "password";
+  ssh_auth_method: "private_key" | "password";
   ssh_key: string;
   ssh_password: string;
 };
@@ -20,7 +20,7 @@ const initialForm: NewServerForm = {
   host: "",
   ssh_user: "ubuntu",
   ssh_port: 22,
-  auth_method: "private_key",
+  ssh_auth_method: "private_key",
   ssh_key: "",
   ssh_password: "",
 };
@@ -59,9 +59,9 @@ export default function DashboardPage() {
         host: form.host,
         ssh_user: form.ssh_user,
         ssh_port: form.ssh_port,
-        auth_method: form.auth_method,
-        ssh_key: form.auth_method === "private_key" ? form.ssh_key : undefined,
-        ssh_password: form.auth_method === "password" ? form.ssh_password : undefined,
+        ssh_auth_method: form.ssh_auth_method,
+        ssh_key: form.ssh_auth_method === "private_key" ? form.ssh_key : undefined,
+        ssh_password: form.ssh_auth_method === "password" ? form.ssh_password : undefined,
       });
       setForm(initialForm);
       setModalOpen(false);
@@ -253,9 +253,9 @@ export default function DashboardPage() {
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => setForm((prev) => ({ ...prev, auth_method: "private_key", ssh_password: "" }))}
+                    onClick={() => setForm((prev) => ({ ...prev, ssh_auth_method: "private_key", ssh_password: "" }))}
                     className={`rounded-xl border px-4 py-2 text-sm transition ${
-                      form.auth_method === "private_key"
+                      form.ssh_auth_method === "private_key"
                         ? "border-blue-500 bg-blue-500/20 text-blue-300"
                         : "border-slate-700 bg-slate-800 text-slate-300"
                     }`}
@@ -264,9 +264,9 @@ export default function DashboardPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setForm((prev) => ({ ...prev, auth_method: "password", ssh_key: "" }))}
+                    onClick={() => setForm((prev) => ({ ...prev, ssh_auth_method: "password", ssh_key: "" }))}
                     className={`rounded-xl border px-4 py-2 text-sm transition ${
-                      form.auth_method === "password"
+                      form.ssh_auth_method === "password"
                         ? "border-blue-500 bg-blue-500/20 text-blue-300"
                         : "border-slate-700 bg-slate-800 text-slate-300"
                     }`}
@@ -276,7 +276,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              {form.auth_method === "private_key" ? (
+              {form.ssh_auth_method === "private_key" ? (
                 <textarea
                   required
                   rows={5}

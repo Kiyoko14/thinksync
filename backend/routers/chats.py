@@ -5,7 +5,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from config import supabase
+from config import supabase, openai_client
 from models import Chat, Message
 from routers.auth import get_current_user
 from routers.servers import LOCAL_SERVERS
@@ -163,21 +163,63 @@ async def send_message(
     command = request.content.strip()
     inspection = inspect_and_apply_command(chat["server_id"], chat_id, command)
 
-    if inspection.get("status") == "skipped":
-        assistant_text = (
-            "Bu buyruq avval bajarilgan: mavjud papkalar qayta yaratilmaydi. "
-            "Faqat yangi o'zgarishlar qo'llandi."
-        )
-    elif inspection.get("status") == "blocked":
-        assistant_text = inspection.get("message", "Buyruq bloklandi")
+    inspection_summary = None
+    if inspection.get("status") == "blocked":
+        inspection_summary = f"[BLOCKED] {inspection.get('message', 'Command blocked')}"
+    elif inspection.get("status") == "skipped":
+        inspection_summary = "[INFO] This command was already applied; no duplicate changes made."
     elif inspection.get("status") == "success":
         created = inspection.get("created", [])
         if created:
-            assistant_text = f"Yangi kataloglar yaratildi: {', '.join(created)}"
+            inspection_summary = f"[SUCCESS] Directories created: {', '.join(created)}"
         else:
-            assistant_text = inspection.get("message", "Buyruq bajarildi")
+            inspection_summary = inspection.get("message")
+
+    history = get_command_history(chat_id)
+    history_text = "\n".join(
+        f"- {h['input']}" for h in history[-8:]
+    ) if history else "None"
+
+    context = get_chat_context(chat_id, chat.get("server_id", ""))
+    cwd = context.cwd if context else "/"
+
+    if openai_client:
+        try:
+            system_prompt = (
+                "You are an expert AI DevOps assistant embedded in a server management platform. "
+                "You help users manage Linux servers, debug issues, deploy code, write shell scripts, "
+                "and explain infrastructure concepts. Be concise, accurate, and helpful. "
+                "When a command is provided, explain what it does and any important caveats. "
+                "When answering questions, be direct and technical. "
+                f"Current working directory: {cwd}\n"
+                f"Recent command history:\n{history_text}"
+            )
+            messages_for_ai = [{"role": "system", "content": system_prompt}]
+
+            for hist in history[-5:]:
+                messages_for_ai.append({"role": "user", "content": hist["input"]})
+                if hist.get("result", {}).get("message"):
+                    messages_for_ai.append({"role": "assistant", "content": hist["result"]["message"]})
+
+            messages_for_ai.append({"role": "user", "content": command})
+            if inspection_summary:
+                messages_for_ai.append({
+                    "role": "system",
+                    "content": f"Local inspection result: {inspection_summary}"
+                })
+
+            ai_response = openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=messages_for_ai,
+                max_tokens=600,
+                temperature=0.4,
+            )
+            assistant_text = ai_response.choices[0].message.content or "Javob olinmadi."
+        except Exception as e:
+            print(f"OpenAI error: {e}")
+            assistant_text = inspection_summary or "Xabar qabul qilindi."
     else:
-        assistant_text = "Xabar qabul qilindi."
+        assistant_text = inspection_summary or "Xabar qabul qilindi. (OpenAI ulanmagan)"
 
     assistant_message = {
         "id": str(uuid4()),

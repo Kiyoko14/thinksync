@@ -61,7 +61,7 @@ class ExecutionSandbox:
         host = server_config.get("host")
         username = server_config.get("username") or server_config.get("ssh_user")
         port = int(server_config.get("port") or server_config.get("ssh_port") or 22)
-        auth_method = server_config.get("auth_method") or server_config.get("ssh_auth_method")
+        auth_method = server_config.get("ssh_auth_method")
         ssh_key = server_config.get("ssh_key")
         ssh_password = server_config.get("ssh_password") or server_config.get("password")
 
