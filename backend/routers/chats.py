@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 from typing import Dict, List, Optional
 from uuid import uuid4
 
@@ -11,6 +12,7 @@ from routers.auth import get_current_user
 from routers.servers import LOCAL_SERVERS
 from services.state_tracker import (
     append_command_history,
+    clear_chat_state,
     get_chat_context,
     get_command_history,
     inspect_and_apply_command,
@@ -40,6 +42,44 @@ class ChatContextResponse(BaseModel):
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _canonical_chat_name(name: str) -> str:
+    return " ".join(name.strip().split()).lower()
+
+
+def _workspace_slug(name: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", _canonical_chat_name(name).replace(" ", "_"))
+    return cleaned.strip("_") or "chat"
+
+
+async def _chat_name_exists(server_id: str, user_id: str, name: str) -> bool:
+    candidate = _canonical_chat_name(name)
+    if supabase:
+        response = await async_db(
+            lambda: supabase.table("chats")
+            .select("name")
+            .eq("server_id", server_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        rows = response.data or []
+        return any(_canonical_chat_name(str(row.get("name", ""))) == candidate for row in rows)
+
+    for chat in LOCAL_CHATS.values():
+        if chat["server_id"] == server_id and chat["user_id"] == user_id:
+            if _canonical_chat_name(chat["name"]) == candidate:
+                return True
+    return False
+
+
+async def _safe_delete_by_chat_id(table: str, chat_id: str) -> None:
+    if not supabase:
+        return
+    try:
+        await async_db(lambda: supabase.table(table).delete().eq("chat_id", chat_id).execute())
+    except Exception as e:
+        print(f"chats.delete: cleanup warning for {table}: {e}")
 
 
 async def _validate_server_access(server_id: str, current_user: dict) -> None:
@@ -106,12 +146,19 @@ async def get_chat(chat_id: str, current_user: dict = Depends(get_current_user))
 async def create_chat(request: CreateChatRequest, current_user: dict = Depends(get_current_user)):
     await _validate_server_access(request.server_id, current_user)
 
-    workspace_path = f"/workspace/server_{request.server_id}/chat_{request.name.replace(' ', '_').lower()}"
+    normalized_name = _canonical_chat_name(request.name)
+    if len(normalized_name) < 2:
+        raise HTTPException(status_code=400, detail="Chat name must contain at least 2 non-space characters")
+
+    if await _chat_name_exists(request.server_id, current_user["id"], normalized_name):
+        raise HTTPException(status_code=409, detail="A chat with this name already exists on this server")
+
+    workspace_path = f"/workspace/server_{request.server_id}/chat_{_workspace_slug(normalized_name)}"
     chat_data = {
         "id": str(uuid4()),
         "server_id": request.server_id,
         "user_id": current_user["id"],
-        "name": request.name,
+        "name": " ".join(request.name.strip().split()),
         "workspace_path": workspace_path,
         "created_at": _now(),
     }
@@ -129,6 +176,38 @@ async def create_chat(request: CreateChatRequest, current_user: dict = Depends(g
     LOCAL_MESSAGES[chat_data["id"]] = []
     get_chat_context(chat_data["id"], chat_data["server_id"])
     return chat_data
+
+
+@router.delete("/{chat_id}")
+async def delete_chat(chat_id: str, current_user: dict = Depends(get_current_user)):
+    chat = await get_chat(chat_id, current_user)
+
+    if supabase:
+        # Best-effort cleanup for related rows even when some optional tables
+        # are absent in a deployment schema.
+        for table in ["messages", "tasks", "actions", "workspaces", "agent_logs"]:
+            await _safe_delete_by_chat_id(table, chat_id)
+
+        await async_db(
+            lambda: supabase.table("chats")
+            .delete()
+            .eq("id", chat_id)
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+    else:
+        LOCAL_CHATS.pop(chat_id, None)
+
+    LOCAL_MESSAGES.pop(chat_id, None)
+    LOCAL_CHATS.pop(chat_id, None)
+
+    clear_chat_state(chat_id)
+
+    return {
+        "message": "Chat deleted",
+        "chat_id": chat_id,
+        "server_id": chat["server_id"],
+    }
 
 
 @router.get("/{chat_id}/messages", response_model=List[Message])

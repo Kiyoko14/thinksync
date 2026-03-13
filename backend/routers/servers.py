@@ -3,7 +3,7 @@ from config import supabase, openai_client, openai_model, call_openai, async_db
 from models import Server
 from routers.auth import get_current_user
 from services.execution import ExecutionSandbox
-from services.state_tracker import get_server_state
+from services.state_tracker import clear_server_state, get_server_state
 from pydantic import BaseModel
 from typing import Dict, List, Literal, Any
 from uuid import uuid4
@@ -66,6 +66,44 @@ def _legacy_server_payload(server_data: Dict[str, Any]) -> Dict[str, Any]:
         "ssh_port": server_data["ssh_port"],
         "ssh_key": legacy_ssh_key,
     }
+
+
+def _server_to_config(server: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "host": server["host"],
+        "port": int(server.get("ssh_port") or 22),
+        "username": server["ssh_user"],
+        "ssh_auth_method": server.get("ssh_auth_method"),
+        "ssh_key": server.get("ssh_key"),
+        "ssh_password": server.get("ssh_password"),
+    }
+
+
+async def _safe_delete_by_server(table: str, server_id: str, user_id: str) -> None:
+    if not supabase:
+        return
+    try:
+        await async_db(
+            lambda: supabase.table(table)
+            .delete()
+            .eq("server_id", server_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+    except Exception as e:
+        print(f"servers.delete: cleanup warning for {table}: {e}")
+
+
+async def _safe_delete_by_chat_ids(table: str, chat_ids: List[str]) -> None:
+    if not supabase or not chat_ids:
+        return
+    for chat_id in chat_ids:
+        try:
+            await async_db(
+                lambda chat_id=chat_id: supabase.table(table).delete().eq("chat_id", chat_id).execute()
+            )
+        except Exception as e:
+            print(f"servers.delete: cleanup warning for {table} (chat_id={chat_id}): {e}")
 
 @router.get("/", response_model=List[Server])
 async def get_servers(current_user: dict = Depends(get_current_user)):
@@ -165,17 +203,58 @@ async def update_server(server_id: str, request: CreateServerRequest, current_us
 @router.delete("/{server_id}")
 async def delete_server(server_id: str, current_user: dict = Depends(get_current_user)):
     if supabase:
-        await async_db(
-            lambda: supabase.table("chats").delete().eq("server_id", server_id).execute()
+        server_response = await async_db(
+            lambda: supabase.table("servers")
+            .select("id")
+            .eq("id", server_id)
+            .eq("user_id", current_user["id"])
+            .execute()
         )
+        if not server_response.data:
+            raise HTTPException(status_code=404, detail="Server not found")
+
+        chats_response = await async_db(
+            lambda: supabase.table("chats")
+            .select("id")
+            .eq("server_id", server_id)
+            .eq("user_id", current_user["id"])
+            .execute()
+        )
+        chat_ids = [str(row.get("id")) for row in (chats_response.data or []) if row.get("id")]
+
+        # Remove rows that are chat-bound first.
+        await _safe_delete_by_chat_ids("messages", chat_ids)
+        await _safe_delete_by_chat_ids("tasks", chat_ids)
+        await _safe_delete_by_chat_ids("actions", chat_ids)
+        await _safe_delete_by_chat_ids("workspaces", chat_ids)
+        await _safe_delete_by_chat_ids("agent_logs", chat_ids)
+
+        # Remove rows bound to this server.
+        await _safe_delete_by_server("deployments", server_id, current_user["id"])
+        await _safe_delete_by_server("pipelines", server_id, current_user["id"])
+        await _safe_delete_by_server("databases", server_id, current_user["id"])
+        await _safe_delete_by_server("chats", server_id, current_user["id"])
+
+        # Tables that may not have user_id in all schemas are cleaned best-effort.
+        try:
+            await async_db(lambda: supabase.table("server_secrets").delete().eq("server_id", server_id).execute())
+        except Exception as e:
+            print(f"servers.delete: cleanup warning for server_secrets: {e}")
+        try:
+            await async_db(lambda: supabase.table("server_logs").delete().eq("server_id", server_id).execute())
+        except Exception as e:
+            print(f"servers.delete: cleanup warning for server_logs: {e}")
+
         await async_db(
             lambda: supabase.table("servers").delete().eq("id", server_id).eq("user_id", current_user["id"]).execute()
         )
+        clear_server_state(server_id, chat_ids)
     else:
         local_server = LOCAL_SERVERS.get(server_id)
         if not local_server or local_server["user_id"] != current_user["id"]:
             raise HTTPException(status_code=404, detail="Server not found")
         del LOCAL_SERVERS[server_id]
+        clear_server_state(server_id)
     return {"message": "Server deleted"}
 
 @router.post("/{server_id}/deploy")
@@ -291,14 +370,7 @@ async def execute_command(server_id: str, request: ExecuteCommandRequest, curren
                 "chat_id": f"direct_{server_id}_{current_user['id']}",
                 "timeout": request.timeout,
             },
-            {
-                "host": server["host"],
-                "port": server["ssh_port"],
-                "username": server["ssh_user"],
-                "ssh_auth_method": server.get("ssh_auth_method"),
-                "ssh_key": server.get("ssh_key"),
-                "ssh_password": server.get("ssh_password"),
-            }
+            _server_to_config(server)
         )
         return result
     except Exception as e:
@@ -329,26 +401,21 @@ async def get_server_status(server_id: str, current_user: dict = Depends(get_cur
             raise HTTPException(status_code=404, detail="Server not found")
 
     sandbox = ExecutionSandbox()
+    server_config = _server_to_config(server)
 
     try:
-        result = await sandbox.execute_action(
-            {
-                "action": "run_command",
-                "command": "echo 'online'",
-                "chat_id": f"status_{server_id}"
-            },
-            {
-                "host": server["host"],
-                "port": server["ssh_port"],
-                "username": server["ssh_user"],
-                "ssh_auth_method": server.get("ssh_auth_method"),
-                "ssh_key": server.get("ssh_key"),
-                "ssh_password": server.get("ssh_password"),
-            }
-        )
+        result = await sandbox._run_ssh_command("echo online", server_config, timeout=10)
+    except Exception as e:
+        return {"status": "offline", "server": server, "error": str(e)}
+
+    if result.get("status") == "success" and result.get("exit_status") == 0:
         return {"status": "online", "server": server}
-    except Exception:
-        return {"status": "offline", "server": server}
+
+    return {
+        "status": "offline",
+        "server": server,
+        "error": result.get("error") or result.get("output") or "SSH check failed",
+    }
 
 
 @router.get("/{server_id}/state")

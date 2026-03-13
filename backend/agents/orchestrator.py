@@ -1,7 +1,6 @@
 from agents.agents import PlannerAgent, ActionAgent, BuilderAgent, DebuggerAgent, AuditorAgent, AutonomousDevOpsAgent
 from agents.memory import agent_memory
 from config import redis_client, supabase
-from services.execution import execute_action
 import json
 
 STATES = ["CREATED", "PLANNED", "ACTION_GENERATED", "BUILDING", "EXECUTING", "DEBUGGING", "AUDITING", "COMPLETED", "FAILED"]
@@ -20,7 +19,7 @@ class Orchestrator:
         self.auditor = AuditorAgent()
         self.autonomous = AutonomousDevOpsAgent()
 
-    async def process_message(self, chat_id: str, message: str):
+    async def process_message(self, chat_id: str, message: str, context: dict | None = None):
         if not supabase:
             return {"error": "Database not configured"}
 
@@ -46,23 +45,27 @@ class Orchestrator:
                     print(f"Warning: Failed to store task in Redis: {e}")
 
             # Initialise working memory for this task
+            safe_context = dict(context or {})
+
             agent_memory.set_working(task_id,
                 chat_id=chat_id,
                 state="CREATED",
                 step="planning",
                 user_message=message[:200],
+                server_id=safe_context.get("server_id", ""),
             )
 
             # Process through states
-            await self.run_task(task_id, chat_id, message)
+            await self.run_task(task_id, chat_id, message, safe_context)
             return {"task_id": task_id, "status": "initiated"}
         except Exception as e:
             print(f"Error creating task: {e}")
             return {"error": str(e)}
 
-    async def run_task(self, task_id: str, chat_id: str, message: str):
+    async def run_task(self, task_id: str, chat_id: str, message: str, context: dict | None = None):
         """Run task with proper error handling"""
         task = {"state": "CREATED"}
+        task_context = dict(context or {})
 
         def _persist_task_state(current_task: dict) -> None:
             """Write task state to Redis (TTL-bounded), Supabase, and working memory."""
@@ -101,9 +104,10 @@ class Orchestrator:
             auto_result = await self.autonomous.run(
                 message,
                 {
-                    "environment": "production",
                     "task_id": task_id,
                     "chat_id": chat_id,
+                    "environment": task_context.get("environment", "production"),
+                    **task_context,
                 },
             )
 
@@ -135,17 +139,6 @@ class Orchestrator:
                 except Exception as e:
                     print(f"Warning: Supabase task completion update failed: {e}")
 
-            # Keep compatibility with external executor for server-bound commands.
-            if status == "completed":
-                actions = auto_result.get("actions", [])
-                for action in actions:
-                    if action.get("server_id"):
-                        result = await execute_action(action)
-                        if result.get("status") != "success":
-                            task["state"] = "DEBUGGING"
-                            task["execution_error"] = result
-                            _persist_task_state(task)
-                            break
         except Exception as e:
             print(f"Error in task processing: {e}")
             try:
@@ -157,6 +150,6 @@ class Orchestrator:
 
 orchestrator = Orchestrator()
 
-async def process_message(chat_id: str, message: str):
+async def process_message(chat_id: str, message: str, context: dict | None = None):
     """Entry point for message processing"""
-    return await orchestrator.process_message(chat_id, message)
+    return await orchestrator.process_message(chat_id, message, context)

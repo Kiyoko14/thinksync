@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, asdict
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from config import redis_client
 
@@ -143,6 +143,31 @@ def append_command_history(chat_id: str, item: dict) -> None:
 
 def get_server_state(server_id: str) -> dict:
     return _load_server_state(server_id).to_dict()
+
+
+def clear_chat_state(chat_id: str) -> None:
+    """Remove in-memory and Redis-backed state for a chat."""
+    _LOCAL_CHAT_CONTEXT.pop(chat_id, None)
+    _LOCAL_COMMAND_HISTORY.pop(chat_id, None)
+    if redis_client:
+        try:
+            redis_client.delete(_chat_key(chat_id), _history_key(chat_id))
+        except Exception:
+            pass
+
+
+def clear_server_state(server_id: str, chat_ids: Optional[Iterable[str]] = None) -> None:
+    """Remove in-memory and Redis-backed state for a server and optionally its chats."""
+    _LOCAL_SERVER_STATES.pop(server_id, None)
+    if redis_client:
+        try:
+            redis_client.delete(_state_key(server_id))
+        except Exception:
+            pass
+
+    if chat_ids:
+        for chat_id in chat_ids:
+            clear_chat_state(chat_id)
 
 
 def _can_create_dir(state: ServerState, path: str) -> bool:
