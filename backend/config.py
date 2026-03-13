@@ -12,8 +12,13 @@ if ENV_FILE.exists():
     load_dotenv(dotenv_path=ENV_FILE, override=False)
 
 # Supabase
+# The backend uses the service role key so it can bypass Row Level Security
+# and perform privileged operations.  Fall back to the anon key only when the
+# service key is not provided (e.g. in local development without full secrets).
 supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_ANON_KEY")
+supabase_key = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+if not os.getenv("SUPABASE_SERVICE_KEY") and os.getenv("SUPABASE_ANON_KEY"):
+    print("⚠ SUPABASE_SERVICE_KEY not set — falling back to SUPABASE_ANON_KEY (RLS is active)")
 
 supabase: Optional[Client] = None
 if supabase_url and supabase_key:

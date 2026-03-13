@@ -83,18 +83,19 @@ async def get_session(authorization: Optional[str] = Header(default=None)):
             created_at=local_user["created_at"],
         )
 
-    if not supabase:
+    if not supabase or not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     try:
-        session = supabase.auth.get_session()
-        if not session or not session.user:
+        # Validate the client-supplied JWT against Supabase
+        user_response = supabase.auth.get_user(token)
+        if not user_response or not user_response.user:
             raise HTTPException(
-                status_code=401, 
+                status_code=401,
                 detail="Not authenticated. Please login first."
             )
-        
-        user = session.user
+
+        user = user_response.user
         return SessionResponse(
             user_id=str(user.id),
             email=user.email or "",
@@ -105,8 +106,8 @@ async def get_session(authorization: Optional[str] = Header(default=None)):
     except Exception as e:
         print(f"Session error: {e}")
         raise HTTPException(
-            status_code=500, 
-            detail="Failed to retrieve session"
+            status_code=401,
+            detail="Not authenticated"
         )
 
 async def get_current_user(
@@ -118,18 +119,19 @@ async def get_current_user(
     if token and token in LOCAL_SESSIONS:
         return LOCAL_SESSIONS[token]
 
-    if not supabase_client:
+    if not supabase_client or not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    
+
     try:
-        session = supabase_client.auth.get_session()
-        if not session or not session.user:
+        # Validate the client-supplied JWT against Supabase
+        user_response = supabase_client.auth.get_user(token)
+        if not user_response or not user_response.user:
             raise HTTPException(
-                status_code=401, 
+                status_code=401,
                 detail="Not authenticated"
             )
-        
-        user = session.user
+
+        user = user_response.user
         return {
             "id": str(user.id),
             "email": user.email or "",
@@ -140,7 +142,7 @@ async def get_current_user(
     except Exception as e:
         print(f"Auth error: {e}")
         raise HTTPException(
-            status_code=401, 
+            status_code=401,
             detail="Authentication failed"
         )
 

@@ -5,10 +5,16 @@ from config import supabase, redis_client, openai_client
 
 app = FastAPI(title="AI DevOps Platform", version="1.0.0")
 
-# CORS Configuration — allow Replit dev domain and production domain
+# CORS Configuration — allow production, local development, and Replit domains
 _replit_domain = os.getenv("REPLIT_DEV_DOMAIN", "")
 allowed_origins = [
     "https://app.thinksync.art",
+    "https://thinksync.art",
+    # Local development origins
+    "http://localhost:3000",
+    "http://localhost:5000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5000",
     *(
         [f"https://{_replit_domain}"]
         if _replit_domain else []
