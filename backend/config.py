@@ -6,11 +6,10 @@ from typing import Optional
 from openai import OpenAI
 from pathlib import Path
 
-# Strictly load configuration only from backend/.env
+# Load .env file if present (Replit secrets take precedence via the environment)
 ENV_FILE = Path(__file__).resolve().parent / ".env"
-if not ENV_FILE.exists():
-    raise RuntimeError(f"Required environment file not found: {ENV_FILE}")
-load_dotenv(dotenv_path=ENV_FILE, override=True)
+if ENV_FILE.exists():
+    load_dotenv(dotenv_path=ENV_FILE, override=False)
 
 # Supabase
 supabase_url = os.getenv("SUPABASE_URL")

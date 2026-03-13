@@ -1,13 +1,18 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import supabase, redis_client, openai_client
 
 app = FastAPI(title="AI DevOps Platform", version="1.0.0")
 
-# CORS Configuration
-# Restrict to specific domains for production security
+# CORS Configuration — allow Replit dev domain and production domain
+_replit_domain = os.getenv("REPLIT_DEV_DOMAIN", "")
 allowed_origins = [
     "https://app.thinksync.art",
+    *(
+        [f"https://{_replit_domain}"]
+        if _replit_domain else []
+    ),
 ]
 
 app.add_middleware(
