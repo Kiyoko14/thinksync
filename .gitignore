@@ -20,6 +20,10 @@ parts/
 sdist/
 var/
 wheels/
+
+# Do not ignore the frontend TypeScript lib directory
+!frontend/src/lib/
+!frontend/src/lib/**
 share/python-wheels/
 *.egg-info/
 .installed.cfg
