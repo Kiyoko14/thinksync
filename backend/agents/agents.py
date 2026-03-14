@@ -511,11 +511,21 @@ Always provide detailed execution logs and status updates.
     async def _execute_command(self, action: Dict, server_config: Dict) -> Dict[str, Any]:
         """Execute a command on a server"""
         from services.execution import ExecutionSandbox
+        import shlex
 
         sandbox = ExecutionSandbox()
+        base_command = action.get("command", "")
+        workspace_path = action.get("workspace_path") or server_config.get("workspace_path")
+
+        if workspace_path and base_command.strip():
+            quoted_workspace = shlex.quote(str(workspace_path))
+            command = f"mkdir -p {quoted_workspace} && cd {quoted_workspace} && {base_command}"
+        else:
+            command = base_command
+
         result = await sandbox.execute_action({
             "action": "run_command",
-            "command": action.get("command", ""),
+            "command": command,
             "chat_id": f"build_{action.get('id', 'unknown')}"
         }, server_config)
 
@@ -1055,7 +1065,13 @@ class AutonomousDevOpsAgent:
                             "error": "Action rejected by security auditor",
                         }
 
-                    build_result = await self.builder.build(action, context.get("server_config", {}))
+                    build_result = await self.builder.build(
+                        action,
+                        {
+                            **context.get("server_config", {}),
+                            "workspace_path": context.get("workspace_path", "/"),
+                        },
+                    )
                     step_results.append({
                         "action": action,
                         "audit": audit,

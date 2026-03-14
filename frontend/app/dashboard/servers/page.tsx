@@ -153,13 +153,15 @@ export default function ServersPage() {
             <h1 className="mt-2 text-3xl font-semibold text-white">Servers</h1>
             <p className="mt-3 text-sm text-slate-300">SSH server inventory, authentication setup, and health checks in one place.</p>
           </div>
-          <button
-            onClick={() => setShowForm((prev) => !prev)}
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:from-cyan-400 hover:to-blue-500"
-          >
-            <Plus className="h-4 w-4" />
-            {showForm ? "Close Form" : "New Server"}
-          </button>
+          {!showForm && (
+            <button
+              onClick={() => setShowForm(true)}
+              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:from-cyan-400 hover:to-blue-500"
+            >
+              <Plus className="h-4 w-4" />
+              Add Server
+            </button>
+          )}
         </div>
       </section>
 

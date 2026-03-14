@@ -16,7 +16,7 @@ class ProcessMessageRequest(BaseModel):
 async def _get_chat_for_user(chat_id: str, user_id: str) -> dict:
     chat_response = await async_db(
         lambda: supabase.table("chats")
-        .select("id,server_id,user_id")
+        .select("id,server_id,user_id,workspace_path")
         .eq("id", chat_id)
         .eq("user_id", user_id)
         .execute()
@@ -99,6 +99,7 @@ async def process_chat_message(
             "chat_id": chat_id,
             "server_id": chat["server_id"],
             "user_id": current_user["id"],
+            "workspace_path": chat.get("workspace_path", "/"),
             "server_config": server_config,
             "environment": (request.context or {}).get("environment", "production"),
         }
@@ -133,7 +134,7 @@ async def get_task_status(task_id: str, current_user: dict = Depends(get_current
         )
     
     try:
-            task = await _get_task_for_user(task_id, current_user["id"])
+        task = await _get_task_for_user(task_id, current_user["id"])
         return {
             "task_id": task_id,
             "state": task.get("state"),

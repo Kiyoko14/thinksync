@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import asyncio
 import re
 from typing import Dict, List, Optional
 from uuid import uuid4
@@ -15,6 +16,7 @@ from services.state_tracker import (
     clear_chat_state,
     get_chat_context,
     get_command_history,
+    initialize_chat_workspace,
     inspect_and_apply_command,
 )
 
@@ -22,6 +24,7 @@ router = APIRouter(prefix="/chats", tags=["chats"])
 
 LOCAL_CHATS: Dict[str, dict] = {}
 LOCAL_MESSAGES: Dict[str, List[dict]] = {}
+CHAT_CREATE_LOCK = asyncio.Lock()
 
 
 class CreateChatRequest(BaseModel):
@@ -53,13 +56,12 @@ def _workspace_slug(name: str) -> str:
     return cleaned.strip("_") or "chat"
 
 
-async def _chat_name_exists(server_id: str, user_id: str, name: str) -> bool:
+async def _chat_name_exists(user_id: str, name: str) -> bool:
     candidate = _canonical_chat_name(name)
     if supabase:
         response = await async_db(
             lambda: supabase.table("chats")
             .select("name")
-            .eq("server_id", server_id)
             .eq("user_id", user_id)
             .execute()
         )
@@ -67,7 +69,7 @@ async def _chat_name_exists(server_id: str, user_id: str, name: str) -> bool:
         return any(_canonical_chat_name(str(row.get("name", ""))) == candidate for row in rows)
 
     for chat in LOCAL_CHATS.values():
-        if chat["server_id"] == server_id and chat["user_id"] == user_id:
+        if chat["user_id"] == user_id:
             if _canonical_chat_name(chat["name"]) == candidate:
                 return True
     return False
@@ -150,32 +152,44 @@ async def create_chat(request: CreateChatRequest, current_user: dict = Depends(g
     if len(normalized_name) < 2:
         raise HTTPException(status_code=400, detail="Chat name must contain at least 2 non-space characters")
 
-    if await _chat_name_exists(request.server_id, current_user["id"], normalized_name):
-        raise HTTPException(status_code=409, detail="A chat with this name already exists on this server")
+    async with CHAT_CREATE_LOCK:
+        if await _chat_name_exists(current_user["id"], normalized_name):
+            raise HTTPException(status_code=409, detail="A chat with this name already exists")
 
-    workspace_path = f"/workspace/server_{request.server_id}/chat_{_workspace_slug(normalized_name)}"
-    chat_data = {
-        "id": str(uuid4()),
-        "server_id": request.server_id,
-        "user_id": current_user["id"],
-        "name": " ".join(request.name.strip().split()),
-        "workspace_path": workspace_path,
-        "created_at": _now(),
-    }
+        workspace_path = f"/workspace/server_{request.server_id}/chat_{_workspace_slug(normalized_name)}"
+        chat_data = {
+            "id": str(uuid4()),
+            "server_id": request.server_id,
+            "user_id": current_user["id"],
+            "name": " ".join(request.name.strip().split()),
+            "workspace_path": workspace_path,
+            "created_at": _now(),
+        }
 
-    if supabase:
-        payload = {k: v for k, v in chat_data.items() if k != "id"}
-        response = await async_db(
-            lambda: supabase.table("chats").insert(payload).execute()
-        )
-        created_chat = response.data[0]
-        get_chat_context(created_chat["id"], created_chat["server_id"])
-        return created_chat
+        if supabase:
+            payload = {k: v for k, v in chat_data.items() if k != "id"}
+            try:
+                response = await async_db(
+                    lambda: supabase.table("chats").insert(payload).execute()
+                )
+            except Exception as e:
+                message = str(e).lower()
+                if "duplicate" in message or "unique" in message:
+                    raise HTTPException(status_code=409, detail="A chat with this name already exists")
+                raise
 
-    LOCAL_CHATS[chat_data["id"]] = chat_data
-    LOCAL_MESSAGES[chat_data["id"]] = []
-    get_chat_context(chat_data["id"], chat_data["server_id"])
-    return chat_data
+            created_chat = response.data[0]
+            initialize_chat_workspace(
+                created_chat["id"],
+                created_chat["server_id"],
+                created_chat.get("workspace_path") or workspace_path,
+            )
+            return created_chat
+
+        LOCAL_CHATS[chat_data["id"]] = chat_data
+        LOCAL_MESSAGES[chat_data["id"]] = []
+        initialize_chat_workspace(chat_data["id"], chat_data["server_id"], chat_data["workspace_path"])
+        return chat_data
 
 
 @router.delete("/{chat_id}")
@@ -234,6 +248,7 @@ async def send_message(
     current_user: dict = Depends(get_current_user),
 ):
     chat = await get_chat(chat_id, current_user)
+    initialize_chat_workspace(chat_id, chat["server_id"], chat.get("workspace_path") or "/")
 
     user_message = {
         "id": str(uuid4()),
@@ -338,7 +353,8 @@ async def send_message(
 @router.get("/{chat_id}/context", response_model=ChatContextResponse)
 async def get_chat_context_state(chat_id: str, current_user: dict = Depends(get_current_user)):
     chat = await get_chat(chat_id, current_user)
-    context = get_chat_context(chat_id, chat["server_id"])
+    workspace_path = chat.get("workspace_path") or "/"
+    context = initialize_chat_workspace(chat_id, chat["server_id"], workspace_path)
     return ChatContextResponse(
         chat_id=chat_id,
         server_id=chat["server_id"],

@@ -1,37 +1,14 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { KeyRound, Lock, Network, Plus, ServerIcon } from "lucide-react";
+import { KeyRound, Lock, Network, ServerIcon } from "lucide-react";
 import { apiClient, Server } from "@/lib/api";
-
-type NewServerForm = {
-  name: string;
-  host: string;
-  ssh_user: string;
-  ssh_port: number;
-  ssh_auth_method: "private_key" | "password";
-  ssh_key: string;
-  ssh_password: string;
-};
-
-const initialForm: NewServerForm = {
-  name: "",
-  host: "",
-  ssh_user: "ubuntu",
-  ssh_port: 22,
-  ssh_auth_method: "private_key",
-  ssh_key: "",
-  ssh_password: "",
-};
 
 export default function DashboardPage() {
   const [servers, setServers] = useState<Server[]>([]);
   const [loading, setLoading] = useState(true);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState<NewServerForm>(initialForm);
   const [error, setError] = useState("");
-  const [creatingServer, setCreatingServer] = useState(false);
 
   const loadServers = async () => {
     try {
@@ -47,31 +24,6 @@ export default function DashboardPage() {
   useEffect(() => {
     loadServers();
   }, []);
-
-  const handleCreateServer = async (event: FormEvent) => {
-    event.preventDefault();
-    setError("");
-    setCreatingServer(true);
-
-    try {
-      await apiClient.createServer({
-        name: form.name,
-        host: form.host,
-        ssh_user: form.ssh_user,
-        ssh_port: form.ssh_port,
-        ssh_auth_method: form.ssh_auth_method,
-        ssh_key: form.ssh_auth_method === "private_key" ? form.ssh_key : undefined,
-        ssh_password: form.ssh_auth_method === "password" ? form.ssh_password : undefined,
-      });
-      setForm(initialForm);
-      setModalOpen(false);
-      await loadServers();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Server yaratilmadi");
-    } finally {
-      setCreatingServer(false);
-    }
-  };
 
   const keyAuthCount = servers.filter((server) => {
     if (server.ssh_auth_method) {
@@ -143,13 +95,12 @@ export default function DashboardPage() {
               Manage your servers, run AI-driven operations, and keep every deployment path visible from a single workspace.
             </p>
           </div>
-          <button
-            onClick={() => setModalOpen(true)}
+          <Link
+            href="/dashboard/servers"
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:from-cyan-400 hover:to-blue-500"
           >
-            <Plus className="h-4 w-4" />
-            Add Server
-          </button>
+            Manage Servers
+          </Link>
         </div>
       </section>
 
@@ -210,112 +161,6 @@ export default function DashboardPage() {
           </div>
         )}
       </section>
-
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-700 bg-slate-900 p-6">
-            <h2 className="text-xl font-semibold">Create New Server</h2>
-            <form onSubmit={handleCreateServer} className="mt-5 space-y-4">
-              <input
-                required
-                value={form.name}
-                onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
-                placeholder="Server name"
-                className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm outline-none focus:border-blue-500"
-              />
-              <input
-                required
-                value={form.host}
-                onChange={(event) => setForm((prev) => ({ ...prev, host: event.target.value }))}
-                placeholder="SSH host"
-                className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm outline-none focus:border-blue-500"
-              />
-              <div className="grid gap-3 sm:grid-cols-2">
-                <input
-                  required
-                  value={form.ssh_user}
-                  onChange={(event) => setForm((prev) => ({ ...prev, ssh_user: event.target.value }))}
-                  placeholder="SSH user"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm outline-none focus:border-blue-500"
-                />
-                <input
-                  required
-                  type="number"
-                  value={form.ssh_port}
-                  onChange={(event) => setForm((prev) => ({ ...prev, ssh_port: Number(event.target.value) || 22 }))}
-                  placeholder="SSH port"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <p className="mb-2 text-sm text-slate-300">SSH Authentication</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setForm((prev) => ({ ...prev, ssh_auth_method: "private_key", ssh_password: "" }))}
-                    className={`rounded-xl border px-4 py-2 text-sm transition ${
-                      form.ssh_auth_method === "private_key"
-                        ? "border-blue-500 bg-blue-500/20 text-blue-300"
-                        : "border-slate-700 bg-slate-800 text-slate-300"
-                    }`}
-                  >
-                    Private Key
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setForm((prev) => ({ ...prev, ssh_auth_method: "password", ssh_key: "" }))}
-                    className={`rounded-xl border px-4 py-2 text-sm transition ${
-                      form.ssh_auth_method === "password"
-                        ? "border-blue-500 bg-blue-500/20 text-blue-300"
-                        : "border-slate-700 bg-slate-800 text-slate-300"
-                    }`}
-                  >
-                    Password
-                  </button>
-                </div>
-              </div>
-
-              {form.ssh_auth_method === "private_key" ? (
-                <textarea
-                  required
-                  rows={5}
-                  value={form.ssh_key}
-                  onChange={(event) => setForm((prev) => ({ ...prev, ssh_key: event.target.value }))}
-                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 font-mono text-sm outline-none focus:border-blue-500"
-                />
-              ) : (
-                <input
-                  required
-                  type="password"
-                  value={form.ssh_password}
-                  onChange={(event) => setForm((prev) => ({ ...prev, ssh_password: event.target.value }))}
-                  placeholder="SSH password"
-                  className="w-full rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm outline-none focus:border-blue-500"
-                />
-              )}
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="flex-1 rounded-xl border border-slate-700 px-4 py-3 text-sm text-slate-200"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={creatingServer}
-                  className="flex-1 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-4 py-3 text-sm font-semibold text-white"
-                >
-                  {creatingServer ? "Creating..." : "Save"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

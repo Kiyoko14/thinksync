@@ -145,6 +145,18 @@ def get_server_state(server_id: str) -> dict:
     return _load_server_state(server_id).to_dict()
 
 
+def initialize_chat_workspace(chat_id: str, server_id: str, workspace_path: str) -> ChatContext:
+    """Ensure chat workspace exists in state and set chat cwd to that folder."""
+    state = _load_server_state(server_id)
+    workspace = _normalize(workspace_path)
+    state.directories.add(workspace)
+    _save_server_state(state)
+
+    context = ChatContext(chat_id=chat_id, server_id=server_id, cwd=workspace)
+    _save_chat_context(context)
+    return context
+
+
 def clear_chat_state(chat_id: str) -> None:
     """Remove in-memory and Redis-backed state for a chat."""
     _LOCAL_CHAT_CONTEXT.pop(chat_id, None)
