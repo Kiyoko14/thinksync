@@ -19,11 +19,14 @@ from services.state_tracker import (
     initialize_chat_workspace,
     inspect_and_apply_command,
 )
+from utils.cache import LRUCache
 
 router = APIRouter(prefix="/chats", tags=["chats"])
 
-LOCAL_CHATS: Dict[str, dict] = {}
-LOCAL_MESSAGES: Dict[str, List[dict]] = {}
+# Use LRU caches instead of unbounded dictionaries to prevent memory leaks
+# Maximum 10,000 chats and 50,000 messages in local fallback mode
+LOCAL_CHATS = LRUCache[str, dict](max_size=10_000)
+LOCAL_MESSAGES = LRUCache[str, List[dict]](max_size=10_000)
 CHAT_CREATE_LOCK = asyncio.Lock()
 
 
@@ -68,6 +71,7 @@ async def _chat_name_exists(user_id: str, name: str) -> bool:
         rows = response.data or []
         return any(_canonical_chat_name(str(row.get("name", ""))) == candidate for row in rows)
 
+    # Check LRU cache for local chats
     for chat in LOCAL_CHATS.values():
         if chat["user_id"] == user_id:
             if _canonical_chat_name(chat["name"]) == candidate:
@@ -186,8 +190,8 @@ async def create_chat(request: CreateChatRequest, current_user: dict = Depends(g
             )
             return created_chat
 
-        LOCAL_CHATS[chat_data["id"]] = chat_data
-        LOCAL_MESSAGES[chat_data["id"]] = []
+        LOCAL_CHATS.set(chat_data["id"], chat_data)
+        LOCAL_MESSAGES.set(chat_data["id"], [])
         initialize_chat_workspace(chat_data["id"], chat_data["server_id"], chat_data["workspace_path"])
         return chat_data
 
@@ -210,11 +214,10 @@ async def delete_chat(chat_id: str, current_user: dict = Depends(get_current_use
             .execute()
         )
     else:
-        LOCAL_CHATS.pop(chat_id, None)
+        LOCAL_CHATS.delete(chat_id)
 
-    LOCAL_MESSAGES.pop(chat_id, None)
-    LOCAL_CHATS.pop(chat_id, None)
-
+    # Clean up messages
+    LOCAL_MESSAGES.delete(chat_id)
     clear_chat_state(chat_id)
 
     return {
@@ -238,7 +241,8 @@ async def get_messages(chat_id: str, current_user: dict = Depends(get_current_us
         )
         return response.data
 
-    return LOCAL_MESSAGES.get(chat_id, [])
+    messages = LOCAL_MESSAGES.get(chat_id)
+    return messages if messages else []
 
 
 @router.post("/{chat_id}/messages")
@@ -341,7 +345,10 @@ async def send_message(
             lambda: supabase.table("messages").insert([user_message, assistant_message]).execute()
         )
     else:
-        LOCAL_MESSAGES.setdefault(chat_id, []).extend([user_message, assistant_message])
+        # Append to existing messages or create new list
+        current_messages = LOCAL_MESSAGES.get(chat_id) or []
+        current_messages.extend([user_message, assistant_message])
+        LOCAL_MESSAGES.set(chat_id, current_messages)
 
     return {
         "user_message": user_message,

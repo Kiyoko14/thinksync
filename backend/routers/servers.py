@@ -11,10 +11,13 @@ from pydantic import BaseModel, Field, validator
 from typing import Dict, List, Literal, Any, Optional
 from uuid import uuid4
 from datetime import datetime, timezone
+from utils.cache import LRUCache
 
 router = APIRouter(prefix="/servers", tags=["servers"])
 
-LOCAL_SERVERS: Dict[str, dict] = {}
+# Use LRU cache instead of unbounded dictionary to prevent memory leak
+# Maximum 10,000 servers in local fallback mode
+LOCAL_SERVERS = LRUCache[str, dict](max_size=10_000)
 
 class CreateServerRequest(BaseModel):
     name: str = Field(min_length=2, max_length=120)
@@ -132,6 +135,7 @@ async def get_servers(current_user: dict = Depends(get_current_user)):
         )
         return response.data
 
+    # Filter servers from LRU cache
     return [
         server
         for server in LOCAL_SERVERS.values()
@@ -268,7 +272,9 @@ async def update_server(server_id: str, request: CreateServerRequest, current_us
     local_server = LOCAL_SERVERS.get(server_id)
     if not local_server or local_server["user_id"] != current_user["id"]:
         raise HTTPException(status_code=404, detail="Server not found")
+    # Update the server data
     local_server.update(server_data)
+    LOCAL_SERVERS.set(server_id, local_server)
     return local_server
 
 @router.delete("/{server_id}")
@@ -324,7 +330,7 @@ async def delete_server(server_id: str, current_user: dict = Depends(get_current
         local_server = LOCAL_SERVERS.get(server_id)
         if not local_server or local_server["user_id"] != current_user["id"]:
             raise HTTPException(status_code=404, detail="Server not found")
-        del LOCAL_SERVERS[server_id]
+        LOCAL_SERVERS.delete(server_id)
         clear_server_state(server_id)
     return {"message": "Server deleted"}
 

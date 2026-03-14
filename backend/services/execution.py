@@ -316,7 +316,11 @@ async def execute_action(action: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "error", "error": "No server_id in action"}
     
     try:
-        server_response = supabase.table("servers").select("*").eq("id", server_id).execute()
+        # Use async_db to avoid blocking the event loop
+        from config import async_db
+        server_response = await async_db(
+            lambda: supabase.table("servers").select("*").eq("id", server_id).execute()
+        )
         if not server_response.data:
             return {"status": "error", "error": "Server not found"}
         
