@@ -1,26 +1,48 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from config import supabase, openai_client, openai_model, call_openai, async_db
 from models import Server
 from routers.auth import get_current_user
 from services.execution import ExecutionSandbox
 from services.state_tracker import clear_server_state, get_server_state
-from pydantic import BaseModel
-from typing import Dict, List, Literal, Any
+from security.validators import sanitize_command, validate_ssh_config
+from security.crypto import mask_ssh_key, mask_sensitive_value
+from security.audit import log_security_event, SecurityEventType
+from pydantic import BaseModel, Field, validator
+from typing import Dict, List, Literal, Any, Optional
 from uuid import uuid4
 from datetime import datetime, timezone
+from utils.cache import LRUCache
 
 router = APIRouter(prefix="/servers", tags=["servers"])
 
-LOCAL_SERVERS: Dict[str, dict] = {}
+# Use LRU cache instead of unbounded dictionary to prevent memory leak
+# Maximum 10,000 servers in local fallback mode
+LOCAL_SERVERS = LRUCache[str, dict](max_size=10_000)
 
 class CreateServerRequest(BaseModel):
-    name: str
-    host: str
-    ssh_user: str
-    ssh_port: int = 22
+    name: str = Field(min_length=2, max_length=120)
+    host: str = Field(min_length=1, max_length=255)
+    ssh_user: str = Field(min_length=1, max_length=64)
+    ssh_port: int = Field(default=22, ge=1, le=65535)
     ssh_auth_method: Literal["private_key", "password"] = "private_key"
-    ssh_key: str | None = None
-    ssh_password: str | None = None
+    ssh_key: str | None = Field(default=None, min_length=100)
+    ssh_password: str | None = Field(default=None, min_length=6)
+    
+    @validator("host")
+    def validate_host_format(cls, v):
+        """Validate host format to prevent injection"""
+        import re
+        if not re.match(r"^[a-zA-Z0-9.-]+$", v):
+            raise ValueError("Host can only contain alphanumeric characters, dots, and hyphens")
+        return v
+    
+    @validator("ssh_user")
+    def validate_username_format(cls, v):
+        """Validate username format"""
+        import re
+        if not re.match(r"^[a-zA-Z0-9_-]+$", v):
+            raise ValueError("Username can only contain alphanumeric characters, underscores, and hyphens")
+        return v
 
 class DeploymentRequest(BaseModel):
     code: str
@@ -113,6 +135,7 @@ async def get_servers(current_user: dict = Depends(get_current_user)):
         )
         return response.data
 
+    # Filter servers from LRU cache
     return [
         server
         for server in LOCAL_SERVERS.values()
@@ -140,8 +163,35 @@ async def get_server(server_id: str, current_user: dict = Depends(get_current_us
     return server
 
 @router.post("/", response_model=Server)
-async def create_server(request: CreateServerRequest, current_user: dict = Depends(get_current_user)):
+async def create_server(
+    request: CreateServerRequest,
+    current_user: dict = Depends(get_current_user),
+    http_request: Request = None,
+):
+    """Create a new server with security validation"""
+    # Validate SSH configuration
+    server_config = _server_to_config({
+        "host": request.host,
+        "ssh_port": request.ssh_port,
+        "ssh_user": request.ssh_user,
+        "ssh_auth_method": request.ssh_auth_method,
+        "ssh_key": request.ssh_key,
+        "ssh_password": request.ssh_password,
+    })
+    
+    is_valid, error_msg = validate_ssh_config(server_config)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=f"Invalid SSH configuration: {error_msg}")
+    
     server_data = _build_server_payload(request, current_user)
+    
+    # Get client IP for audit logging
+    ip_address = None
+    if http_request:
+        ip_address = (
+            http_request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or (http_request.client.host if http_request.client else None)
+        )
 
     if supabase:
         payload = {k: v for k, v in server_data.items() if k != "id"}
@@ -149,13 +199,38 @@ async def create_server(request: CreateServerRequest, current_user: dict = Depen
             response = await async_db(
                 lambda: supabase.table("servers").insert(payload).execute()
             )
-            return response.data[0]
+            created_server = response.data[0]
+            
+            # Log successful creation
+            log_security_event(
+                SecurityEventType.CONFIG_SERVER_CREATED,
+                user_id=current_user["id"],
+                resource_type="server",
+                resource_id=created_server["id"],
+                details={"host": request.host, "name": request.name},
+                ip_address=ip_address,
+                severity="info",
+            )
+            
+            return created_server
         except Exception:
             # Retry for legacy schema that doesn't have ssh_auth_method/ssh_password.
             response = await async_db(
                 lambda: supabase.table("servers").insert(_legacy_server_payload(server_data)).execute()
             )
-            return response.data[0]
+            created_server = response.data[0]
+            
+            log_security_event(
+                SecurityEventType.CONFIG_SERVER_CREATED,
+                user_id=current_user["id"],
+                resource_type="server",
+                resource_id=created_server["id"],
+                details={"host": request.host, "name": request.name},
+                ip_address=ip_address,
+                severity="info",
+            )
+            
+            return created_server
 
     LOCAL_SERVERS[server_data["id"]] = server_data
     return server_data
@@ -197,7 +272,9 @@ async def update_server(server_id: str, request: CreateServerRequest, current_us
     local_server = LOCAL_SERVERS.get(server_id)
     if not local_server or local_server["user_id"] != current_user["id"]:
         raise HTTPException(status_code=404, detail="Server not found")
+    # Update the server data
     local_server.update(server_data)
+    LOCAL_SERVERS.set(server_id, local_server)
     return local_server
 
 @router.delete("/{server_id}")
@@ -253,7 +330,7 @@ async def delete_server(server_id: str, current_user: dict = Depends(get_current
         local_server = LOCAL_SERVERS.get(server_id)
         if not local_server or local_server["user_id"] != current_user["id"]:
             raise HTTPException(status_code=404, detail="Server not found")
-        del LOCAL_SERVERS[server_id]
+        LOCAL_SERVERS.delete(server_id)
         clear_server_state(server_id)
     return {"message": "Server deleted"}
 
@@ -337,8 +414,13 @@ Provide only the deployment script/commands."""
     }
 
 @router.post("/{server_id}/execute")
-async def execute_command(server_id: str, request: ExecuteCommandRequest, current_user: dict = Depends(get_current_user)):
-    """Execute a command on a server"""
+async def execute_command(
+    server_id: str,
+    request: ExecuteCommandRequest,
+    current_user: dict = Depends(get_current_user),
+    http_request: Request = None,
+):
+    """Execute a command on a server with comprehensive security checks"""
     if supabase:
         server_response = await async_db(
             lambda: supabase.table("servers")
@@ -355,25 +437,47 @@ async def execute_command(server_id: str, request: ExecuteCommandRequest, curren
         if not server or server["user_id"] != current_user["id"]:
             raise HTTPException(status_code=404, detail="Server not found")
 
-    sandbox = ExecutionSandbox()
+    # Validate command before execution
+    is_safe, sanitized_cmd, error_msg = sanitize_command(request.command, allow_operators=False)
+    if not is_safe:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Command validation failed: {error_msg}"
+        )
     
-    # Safety check
-    dangerous_commands = ["rm -rf /", "mkfs", "shutdown", "reboot", "mount", "umount", "passwd", "useradd"]
-    if any(cmd in request.command for cmd in dangerous_commands):
-        raise HTTPException(status_code=400, detail="Command contains dangerous operations")
+    # Get client IP for audit logging
+    ip_address = None
+    if http_request:
+        ip_address = (
+            http_request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or (http_request.client.host if http_request.client else None)
+        )
+    
+    sandbox = ExecutionSandbox()
     
     try:
         result = await sandbox.execute_action(
             {
                 "action": "run_command",
-                "command": request.command,
+                "command": sanitized_cmd,
                 "chat_id": f"direct_{server_id}_{current_user['id']}",
                 "timeout": request.timeout,
             },
-            _server_to_config(server)
+            _server_to_config(server),
+            user_id=current_user["id"],
+            ip_address=ip_address,
         )
         return result
     except Exception as e:
+        log_security_event(
+            SecurityEventType.COMMAND_FAILED,
+            user_id=current_user["id"],
+            resource_type="server",
+            resource_id=server_id,
+            details={"error": str(e)},
+            ip_address=ip_address,
+            severity="error",
+        )
         return {
             "status": "error",
             "message": str(e),

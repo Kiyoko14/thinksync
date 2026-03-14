@@ -6,6 +6,7 @@ from dataclasses import dataclass, asdict
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from config import redis_client
+from utils.cache import LRUCache
 
 
 @dataclass
@@ -32,9 +33,11 @@ class ChatContext:
         return asdict(self)
 
 
-_LOCAL_SERVER_STATES: Dict[str, ServerState] = {}
-_LOCAL_CHAT_CONTEXT: Dict[str, ChatContext] = {}
-_LOCAL_COMMAND_HISTORY: Dict[str, List[dict]] = {}
+# Use LRU caches instead of unbounded dictionaries to prevent memory leaks
+# Maximum 1000 servers, 5000 chats, 5000 command histories in memory
+_LOCAL_SERVER_STATES = LRUCache[str, ServerState](max_size=1000)
+_LOCAL_CHAT_CONTEXT = LRUCache[str, ChatContext](max_size=5000)
+_LOCAL_COMMAND_HISTORY = LRUCache[str, List[dict]](max_size=5000)
 
 
 def _normalize(path: str) -> str:
@@ -65,80 +68,114 @@ def _history_key(chat_id: str) -> str:
 
 
 def _load_server_state(server_id: str) -> ServerState:
-    if server_id in _LOCAL_SERVER_STATES:
-        return _LOCAL_SERVER_STATES[server_id]
+    # Try LRU cache first
+    cached_state = _LOCAL_SERVER_STATES.get(server_id)
+    if cached_state:
+        return cached_state
 
+    # Try Redis
     if redis_client:
-        payload = redis_client.get(_state_key(server_id))
-        if payload:
-            decoded = json.loads(payload)
-            state = ServerState(
-                server_id=server_id,
-                directories=set(decoded.get("directories", ["/"])),
-                files=set(decoded.get("files", [])),
-            )
-            _LOCAL_SERVER_STATES[server_id] = state
-            return state
+        try:
+            payload = redis_client.get(_state_key(server_id))
+            if payload:
+                decoded = json.loads(payload)
+                state = ServerState(
+                    server_id=server_id,
+                    directories=set(decoded.get("directories", ["/"])),
+                    files=set(decoded.get("files", [])),
+                )
+                _LOCAL_SERVER_STATES.set(server_id, state)
+                return state
+        except Exception as e:
+            print(f"Error loading server state from Redis: {e}")
 
+    # Create default state
     state = ServerState(server_id=server_id, directories={"/", "/home", "/home/ubuntu"}, files=set())
-    _LOCAL_SERVER_STATES[server_id] = state
+    _LOCAL_SERVER_STATES.set(server_id, state)
     return state
 
 
 def _save_server_state(state: ServerState) -> None:
-    _LOCAL_SERVER_STATES[state.server_id] = state
+    _LOCAL_SERVER_STATES.set(state.server_id, state)
     if redis_client:
-        redis_client.set(_state_key(state.server_id), json.dumps(state.to_dict()))
+        try:
+            redis_client.set(_state_key(state.server_id), json.dumps(state.to_dict()))
+        except Exception as e:
+            print(f"Error saving server state to Redis: {e}")
 
 
 def get_chat_context(chat_id: str, server_id: str) -> ChatContext:
-    if chat_id in _LOCAL_CHAT_CONTEXT:
-        return _LOCAL_CHAT_CONTEXT[chat_id]
+    # Try LRU cache first
+    cached_context = _LOCAL_CHAT_CONTEXT.get(chat_id)
+    if cached_context:
+        return cached_context
 
+    # Try Redis
     if redis_client:
-        payload = redis_client.get(_chat_key(chat_id))
-        if payload:
-            decoded = json.loads(payload)
-            context = ChatContext(
-                chat_id=chat_id,
-                server_id=decoded.get("server_id", server_id),
-                cwd=decoded.get("cwd", "/"),
-            )
-            _LOCAL_CHAT_CONTEXT[chat_id] = context
-            return context
+        try:
+            payload = redis_client.get(_chat_key(chat_id))
+            if payload:
+                decoded = json.loads(payload)
+                context = ChatContext(
+                    chat_id=chat_id,
+                    server_id=decoded.get("server_id", server_id),
+                    cwd=decoded.get("cwd", "/"),
+                )
+                _LOCAL_CHAT_CONTEXT.set(chat_id, context)
+                return context
+        except Exception as e:
+            print(f"Error loading chat context from Redis: {e}")
 
+    # Create default context
     context = ChatContext(chat_id=chat_id, server_id=server_id, cwd="/")
-    _LOCAL_CHAT_CONTEXT[chat_id] = context
+    _LOCAL_CHAT_CONTEXT.set(chat_id, context)
     return context
 
 
 def _save_chat_context(context: ChatContext) -> None:
-    _LOCAL_CHAT_CONTEXT[context.chat_id] = context
+    _LOCAL_CHAT_CONTEXT.set(context.chat_id, context)
     if redis_client:
-        redis_client.set(_chat_key(context.chat_id), json.dumps(context.to_dict()))
+        try:
+            redis_client.set(_chat_key(context.chat_id), json.dumps(context.to_dict()))
+        except Exception as e:
+            print(f"Error saving chat context to Redis: {e}")
 
 
 def get_command_history(chat_id: str) -> List[dict]:
-    if chat_id in _LOCAL_COMMAND_HISTORY:
-        return _LOCAL_COMMAND_HISTORY[chat_id]
+    # Try LRU cache first
+    cached_history = _LOCAL_COMMAND_HISTORY.get(chat_id)
+    if cached_history:
+        return cached_history
 
+    # Try Redis
     if redis_client:
-        payload = redis_client.get(_history_key(chat_id))
-        if payload:
-            data = json.loads(payload)
-            _LOCAL_COMMAND_HISTORY[chat_id] = data
-            return data
+        try:
+            payload = redis_client.get(_history_key(chat_id))
+            if payload:
+                data = json.loads(payload)
+                _LOCAL_COMMAND_HISTORY.set(chat_id, data)
+                return data
+        except Exception as e:
+            print(f"Error loading command history from Redis: {e}")
 
-    _LOCAL_COMMAND_HISTORY[chat_id] = []
-    return _LOCAL_COMMAND_HISTORY[chat_id]
+    # Create empty history
+    empty_history: List[dict] = []
+    _LOCAL_COMMAND_HISTORY.set(chat_id, empty_history)
+    return empty_history
 
 
 def append_command_history(chat_id: str, item: dict) -> None:
-    history = get_command_history(chat_id)
+    history = get_command_history(chat_id).copy()  # Copy to avoid mutation
     history.append(item)
-    _LOCAL_COMMAND_HISTORY[chat_id] = history[-200:]
+    # Keep only last 200 items to prevent unbounded growth
+    trimmed_history = history[-200:]
+    _LOCAL_COMMAND_HISTORY.set(chat_id, trimmed_history)
+    
     if redis_client:
-        redis_client.set(_history_key(chat_id), json.dumps(_LOCAL_COMMAND_HISTORY[chat_id]))
+        try:
+            redis_client.set(_history_key(chat_id), json.dumps(trimmed_history))
+        except Exception as e:
+            print(f"Error saving command history to Redis: {e}")
 
 
 def get_server_state(server_id: str) -> dict:
@@ -159,23 +196,23 @@ def initialize_chat_workspace(chat_id: str, server_id: str, workspace_path: str)
 
 def clear_chat_state(chat_id: str) -> None:
     """Remove in-memory and Redis-backed state for a chat."""
-    _LOCAL_CHAT_CONTEXT.pop(chat_id, None)
-    _LOCAL_COMMAND_HISTORY.pop(chat_id, None)
+    _LOCAL_CHAT_CONTEXT.delete(chat_id)
+    _LOCAL_COMMAND_HISTORY.delete(chat_id)
     if redis_client:
         try:
             redis_client.delete(_chat_key(chat_id), _history_key(chat_id))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error deleting chat state from Redis: {e}")
 
 
 def clear_server_state(server_id: str, chat_ids: Optional[Iterable[str]] = None) -> None:
     """Remove in-memory and Redis-backed state for a server and optionally its chats."""
-    _LOCAL_SERVER_STATES.pop(server_id, None)
+    _LOCAL_SERVER_STATES.delete(server_id)
     if redis_client:
         try:
             redis_client.delete(_state_key(server_id))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Error deleting server state from Redis: {e}")
 
     if chat_ids:
         for chat_id in chat_ids:

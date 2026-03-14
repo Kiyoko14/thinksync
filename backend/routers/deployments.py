@@ -150,16 +150,29 @@ async def execute_deployment(
 
 async def _run_and_update(run_id: str, deployment_id: str) -> None:
     """Background task: execute the pipeline run and update deployment status."""
-    result = await pipeline_engine.execute_run(run_id)
-    if supabase:
-        try:
-            await async_db(
-                lambda: supabase.table("deployments").update({
-                    "status": result.get("status", "failed"),
-                }).eq("id", deployment_id).execute()
-            )
-        except Exception as e:
-            print(f"deployments._run_and_update supabase update warning: {e}")
+    try:
+        result = await pipeline_engine.execute_run(run_id)
+        if supabase:
+            try:
+                await async_db(
+                    lambda: supabase.table("deployments").update({
+                        "status": result.get("status", "failed"),
+                    }).eq("id", deployment_id).execute()
+                )
+            except Exception as e:
+                print(f"deployments._run_and_update supabase update warning: {e}")
+    except Exception as e:
+        # Handle pipeline execution errors
+        print(f"deployments._run_and_update pipeline error: {e}")
+        if supabase:
+            try:
+                await async_db(
+                    lambda: supabase.table("deployments").update({
+                        "status": "failed",
+                    }).eq("id", deployment_id).execute()
+                )
+            except Exception as update_error:
+                print(f"deployments._run_and_update failed to update status after error: {update_error}")
 
 
 @router.get("/{deployment_id}/status", response_model=dict)
