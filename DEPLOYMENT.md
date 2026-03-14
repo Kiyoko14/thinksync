@@ -27,7 +27,11 @@ OPENAI_API_KEY=
 # Frontend URLs
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
-NEXT_PUBLIC_API_URL=https://api.yourdomain.com
+NEXT_PUBLIC_API_URL=https://api.thinksync.art
+
+# CORS (backend)
+CORS_ALLOW_ORIGINS=https://app.thinksync.art
+CORS_ALLOW_ORIGIN_REGEX=
 
 # Redis
 REDIS_URL=redis://localhost:6379
@@ -161,7 +165,7 @@ git push heroku main
 
 ## Reverse Proxy Setup
 
-### Nginx Configuration
+### Nginx Configuration (app.thinksync.art / api.thinksync.art)
 
 ```nginx
 upstream backend {
@@ -174,7 +178,7 @@ upstream frontend {
 
 server {
     listen 443 ssl http2;
-    server_name api.yourdomain.com;
+    server_name api.thinksync.art;
 
     ssl_certificate /etc/ssl/certs/thinksync.crt;
     ssl_certificate_key /etc/ssl/private/thinksync.key;
@@ -190,7 +194,7 @@ server {
 
 server {
     listen 443 ssl http2;
-    server_name yourdomain.com;
+    server_name app.thinksync.art;
 
     ssl_certificate /etc/ssl/certs/thinksync.crt;
     ssl_certificate_key /etc/ssl/private/thinksync.key;
@@ -202,12 +206,11 @@ server {
 }
 ```
 
-### Update CORS in main.py
+### Production CORS
 
 ```python
 allowed_origins = [
-    "https://yourdomain.com",
-    "https://api.yourdomain.com",
+    "https://app.thinksync.art",
 ]
 ```
 

@@ -44,6 +44,9 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - ENVIRONMENT=production
+      # Strict production CORS: browser origin must be app.thinksync.art
+      - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-https://app.thinksync.art}
+      - CORS_ALLOW_ORIGIN_REGEX=${CORS_ALLOW_ORIGIN_REGEX:-}
 
       # ── Concurrency / performance tunables ────────────────────────────────
       # Workers: number of uvicorn processes (default: 2×CPU+1, max 8)

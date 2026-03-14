@@ -59,23 +59,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="AI DevOps Platform", version="1.0.0", lifespan=lifespan)
 
-# CORS Configuration — allow production, local development, and Replit domains
+# CORS Configuration
+# Production default: only https://app.thinksync.art
+# Development default: localhost + common dev domains
+environment = os.getenv("ENVIRONMENT", "development").strip().lower()
+is_production = environment == "production"
+
 _replit_domain = os.getenv("REPLIT_DEV_DOMAIN", "")
-allowed_origins = [
-    "https://app.thinksync.art",
-    "https://thinksync.art",
-    # Local development origins
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    *(
-        [f"https://{_replit_domain}"]
-        if _replit_domain else []
-    ),
+_extra_origins_raw = os.getenv("CORS_ALLOW_ORIGINS", "")
+_extra_origins = [
+    origin.strip()
+    for origin in _extra_origins_raw.split(",")
+    if origin.strip()
 ]
+
+if is_production:
+    allowed_origins = ["https://app.thinksync.art", *_extra_origins]
+    allow_origin_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX", "").strip() or None
+else:
+    allowed_origins = [
+        "https://app.thinksync.art",
+        "https://thinksync.art",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        *_extra_origins,
+        *([f"https://{_replit_domain}"] if _replit_domain else []),
+    ]
+    default_origin_regex = (
+        r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$|"
+        r"^https://.*\.app\.github\.dev$|"
+        r"^https://.*\.replit\.dev$"
+    )
+    allow_origin_regex = os.getenv("CORS_ALLOW_ORIGIN_REGEX", default_origin_regex)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=allow_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

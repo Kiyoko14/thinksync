@@ -187,7 +187,9 @@ OPENAI_API_KEY=<production-key>
 REDIS_URL=<production-redis>
 NEXT_PUBLIC_SUPABASE_URL=<production-url>
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<production-key>
-NEXT_PUBLIC_API_URL=https://api.yourdomain.com
+NEXT_PUBLIC_API_URL=https://api.thinksync.art
+CORS_ALLOW_ORIGINS=https://app.thinksync.art
+CORS_ALLOW_ORIGIN_REGEX=
 ENVIRONMENT=production
 DEBUG=false
 ```
@@ -216,16 +218,16 @@ DEBUG=false
 ### ✓ Smoke Tests (Production)
 ```bash
 # Test health
-curl https://api.yourdomain.com/health
+curl https://api.thinksync.art/health
 
 # Test CORS
-curl -H "Origin: https://yourdomain.com" https://api.yourdomain.com/
+curl -H "Origin: https://app.thinksync.art" https://api.thinksync.art/
 
 # Test frontend
-curl https://yourdomain.com
+curl https://app.thinksync.art
 
 # Test API
-curl -X POST https://api.yourdomain.com/auth/login
+curl -X POST https://api.thinksync.art/auth/login
 ```
 
 ---

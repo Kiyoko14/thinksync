@@ -1,5 +1,8 @@
 const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "https://api.thinksync.art";
+  process.env.NEXT_PUBLIC_API_URL ??
+  (process.env.NODE_ENV === "development"
+    ? "http://127.0.0.1:8000"
+    : "https://api.thinksync.art");
 
 const TOKEN_KEY = "thinksync_token";
 
@@ -184,10 +187,17 @@ async function request<T>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers,
+    });
+  } catch {
+    throw new Error(
+      `Backend bilan ulanish amalga oshmadi. API URL: ${API_URL}. Frontend .env faylida NEXT_PUBLIC_API_URL ni tekshiring.`
+    );
+  }
 
   if (!response.ok) {
     let message = `Request failed: ${response.status}`;
