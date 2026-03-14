@@ -150,9 +150,9 @@ _DB_SEMAPHORE = asyncio.Semaphore(DB_CONCURRENCY)
 _T = TypeVar("_T")
 
 
-async def async_db(fn: Callable[[], _T]) -> _T:
+async def async_db(fn: Callable[[], _T], max_attempts: int = 3) -> _T:
     """
-    Run a synchronous Supabase (or other blocking DB) call off the event loop.
+    Run a synchronous Supabase (or other blocking DB) call off the event loop with retry logic.
 
     The call is wrapped in a lambda at the call site so arguments are captured
     by closure, e.g.:
@@ -163,6 +163,42 @@ async def async_db(fn: Callable[[], _T]) -> _T:
                         .eq("user_id", uid)
                         .execute()
         )
+    
+    Args:
+        fn: Lambda function wrapping the synchronous DB call
+        max_attempts: Maximum retry attempts for transient failures (default: 3)
+        
+    Returns:
+        Result of the database call
+        
+    Raises:
+        Exception: If all retry attempts fail
     """
-    async with _DB_SEMAPHORE:
-        return await asyncio.to_thread(fn)
+    last_exception = None
+    
+    for attempt in range(1, max_attempts + 1):
+        async with _DB_SEMAPHORE:
+            try:
+                return await asyncio.to_thread(fn)
+            except Exception as e:
+                last_exception = e
+                error_msg = str(e).lower()
+                
+                # Check if this is a transient error worth retrying
+                is_transient = any(
+                    pattern in error_msg
+                    for pattern in ["timeout", "connection", "network", "503", "504", "502"]
+                )
+                
+                if not is_transient or attempt >= max_attempts:
+                    raise
+                
+                # Exponential backoff: 0.5s, 1s, 2s
+                delay = 0.5 * (2 ** (attempt - 1))
+                print(f"DB operation failed (attempt {attempt}/{max_attempts}): {str(e)}. Retrying in {delay}s...")
+                await asyncio.sleep(delay)
+    
+    # Should never reach here, but just in case
+    if last_exception:
+        raise last_exception
+    raise Exception("Database operation failed after retries")
