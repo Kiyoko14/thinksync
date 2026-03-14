@@ -4,13 +4,16 @@ import json
 import threading
 from collections import OrderedDict
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from supabase import Client
 from config import supabase, redis_client
 from pydantic import BaseModel, EmailStr, Field
 from typing import Dict, Optional
 from uuid import uuid4
 from datetime import datetime, timezone
+
+from security.audit import log_security_event, SecurityEventType
+from security.crypto import mask_sensitive_value
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -84,8 +87,16 @@ def _extract_token(authorization: Optional[str]) -> Optional[str]:
     return authorization[len(prefix):].strip()
 
 @router.post("/login", response_model=LoginResponse)
-async def login(request: LoginRequest):
+async def login(request: LoginRequest, http_request: Request = None):
     """Password-based login with local fallback session support."""
+    # Get client IP for audit logging
+    ip_address = None
+    if http_request:
+        ip_address = (
+            http_request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or (http_request.client.host if http_request.client else None)
+        )
+    
     if supabase:
         try:
             response = await asyncio.to_thread(
@@ -96,21 +107,46 @@ async def login(request: LoginRequest):
             user = getattr(response, "user", None)
 
             if not session or not user:
+                # Log failed login attempt
+                log_security_event(
+                    SecurityEventType.AUTH_LOGIN_FAILURE,
+                    details={"email": request.email, "reason": "invalid_credentials"},
+                    ip_address=ip_address,
+                    severity="warning",
+                )
                 raise HTTPException(status_code=401, detail="Invalid email or password")
 
+            user_dict = {
+                "id": str(user.id),
+                "email": user.email or request.email,
+                "created_at": str(user.created_at),
+            }
+            
+            # Log successful login
+            log_security_event(
+                SecurityEventType.AUTH_LOGIN_SUCCESS,
+                user_id=user_dict["id"],
+                details={"email": request.email},
+                ip_address=ip_address,
+                severity="info",
+            )
+            
             return LoginResponse(
                 token=session.access_token,
-                user={
-                    "id": str(user.id),
-                    "email": user.email or request.email,
-                    "created_at": str(user.created_at),
-                },
+                user=user_dict,
             )
         except HTTPException:
             raise
         except Exception as e:
             print(f"Supabase login error for {request.email}: {e}")
+            log_security_event(
+                SecurityEventType.AUTH_LOGIN_FAILURE,
+                details={"email": request.email, "error": str(e)},
+                ip_address=ip_address,
+                severity="error",
+            )
 
+    # Local fallback mode
     token = str(uuid4())
     now = datetime.now(timezone.utc).isoformat()
     user = {
@@ -119,6 +155,15 @@ async def login(request: LoginRequest):
         "created_at": now,
     }
     LOCAL_SESSIONS[token] = user
+    
+    log_security_event(
+        SecurityEventType.AUTH_LOGIN_SUCCESS,
+        user_id=user["id"],
+        details={"email": request.email, "mode": "local"},
+        ip_address=ip_address,
+        severity="info",
+    )
+    
     return LoginResponse(token=token, user=user)
 
 @router.get("/session", response_model=SessionResponse)
@@ -247,22 +292,61 @@ async def get_current_user(
         )
 
 @router.post("/logout")
-async def logout(authorization: Optional[str] = Header(default=None)):
+async def logout(
+    authorization: Optional[str] = Header(default=None),
+    http_request: Request = None,
+):
     """Logout current user"""
     token = _extract_token(authorization)
+    
+    # Get client IP for audit logging
+    ip_address = None
+    if http_request:
+        ip_address = (
+            http_request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or (http_request.client.host if http_request.client else None)
+        )
+    
+    user_id = None
     if token and token in LOCAL_SESSIONS:
+        user_id = LOCAL_SESSIONS[token].get("id")
         del LOCAL_SESSIONS[token]
+        
+        log_security_event(
+            SecurityEventType.AUTH_LOGOUT,
+            user_id=user_id,
+            ip_address=ip_address,
+            severity="info",
+        )
+        
         return {"message": "Logged out successfully"}
 
     if not supabase:
         return {"message": "Logged out successfully"}
 
     try:
+        # Try to get user_id from token before logout
+        if token:
+            try:
+                user_response = await asyncio.to_thread(supabase.auth.get_user, token)
+                if user_response and user_response.user:
+                    user_id = str(user_response.user.id)
+            except Exception:
+                pass
+        
         supabase.auth.sign_out()
+        
+        log_security_event(
+            SecurityEventType.AUTH_LOGOUT,
+            user_id=user_id,
+            ip_address=ip_address,
+            severity="info",
+        )
+        
         return {"message": "Logged out successfully"}
     except Exception as e:
         print(f"Logout error: {e}")
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail="Logout failed"
         )

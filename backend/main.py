@@ -114,6 +114,14 @@ app.add_middleware(TimeoutMiddleware, timeout_seconds=_REQUEST_TIMEOUT)
 from services.limiter import RateLimitMiddleware
 app.add_middleware(RateLimitMiddleware, requests_per_minute=_RATE_LIMIT_PER_MINUTE)
 
+# Error handling middleware — catch all unhandled exceptions
+from middleware.error_handler import ErrorHandlerMiddleware
+app.add_middleware(ErrorHandlerMiddleware)
+
+# Request logging middleware — log all requests/responses
+from middleware.request_logger import RequestLoggerMiddleware
+app.add_middleware(RequestLoggerMiddleware)
+
 @app.get("/")
 async def root():
     return {"message": "AI DevOps Platform API", "version": "1.0.0"}
